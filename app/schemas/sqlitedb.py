@@ -4,7 +4,7 @@ from pathlib import Path
 import bcrypt
 
 # SQLite setup
-SQLITE_DB_PATH = Path("roles_docs.db")
+SQLITE_DB_PATH = Path("app\\schemas\\roles_docs.db")
 sqlite_conn = sqlite3.connect(str(SQLITE_DB_PATH), check_same_thread=False)
 
 def _init_sqlite(conn: sqlite3.Connection = sqlite_conn) -> None:
@@ -39,7 +39,7 @@ def _init_sqlite(conn: sqlite3.Connection = sqlite_conn) -> None:
 
 # create default C-Level user for testing/demo purposes
 def create_default_user():
-    conn_local = sqlite3.connect("roles_docs.db")
+    conn_local = sqlite3.connect("app\\schemas\\roles_docs.db")
     c_local = conn_local.cursor()
 
     c_local.execute("INSERT OR IGNORE INTO roles (role_name) VALUES (?)", ("C-Level",))
