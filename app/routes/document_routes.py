@@ -4,8 +4,8 @@ from fastapi import APIRouter, File, Form, Path, UploadFile, HTTPException
 from fastapi.responses import JSONResponse
 import pandas as pd
 
-from app.schemas.duckdb import init_duckdb, get_duckdb_conn
-from app.schemas.sqlitedb import init_sqlite, get_sqlite_conn
+from app.schemas.duckdb import get_duckdb_conn
+from app.schemas.sqlitedb import get_sqlite_conn
 from app.utils.rag_module import index_unembedded_document
 
 router = APIRouter()
@@ -84,6 +84,7 @@ async def upload_docs(file: UploadFile = File(...), role: str = Form(...)):
         )
         sqlite_conn.commit()
 
+        # Calling indexing process to embed the document into the vector store.
         index_unembedded_document()
         print("Files are indexed successfully.")
         return JSONResponse(content={"message": f"{filename} uploaded successfully for role '{role}'."})

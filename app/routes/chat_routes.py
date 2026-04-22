@@ -1,6 +1,6 @@
 # Chat Routes
 
-import app
+from fastapi import APIRouter, Depends
 from app.authentication.auth import authenticate
 from fastapi import Depends
 from app.main import ChatRequest
@@ -8,8 +8,12 @@ from app.utils.rag_module import detect_query_mode
 from app.utils.sql_query import handle_sql_query
 from app.utils.rag_chain import rag_handler
 
+router = APIRouter()
 
-@app.post("/chat")
+# Import ChatRequest from main module
+from app.main import ChatRequest
+
+@router.post("/chat/")
 async def chat_endpoint(request: ChatRequest, user = Depends(authenticate)):
     # Here you would implement the logic to handle the chat request,
 

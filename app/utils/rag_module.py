@@ -1,12 +1,49 @@
-
 from fastapi import HTTPException, Path
-from openai import vector_stores
+from groq import Groq
 import pandas as pd
 from app.schemas.sqlitedb import get_sqlite_conn
 
-from langchain.schema import Document
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from dotenv import load_dotenv
+import os
+
+from langchain_core.embeddings import OpenAIEmbeddings
+from langchain_core.documents import Document
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
+
+
+load_dotenv()
+
+os.environ["LANGCHAIN_TRACING_V2"] = "true"
+os.environ["LANGCHAIN_ENDPOINT"] = "https://api.smith.langchain.com"
+os.environ["LANGCHAIN_PROJECT"] = "RAG"
+
+langchain_key = os.getenv["LANGCHAIN_API_KEY"]
+groq_api_key = os.getenv("GROQ_API_KEY")
+cohere_api_key = os.environ["COHERE_API_KEY"]
+
+if not groq_api_key:
+    # raise SystemExit(f"Missing GROQ_API_KEY in {ENV_FILE}")
+    raise SystemExit(f"Missing GROQ_API_KEY in ENV FILE")
+elif not langchain_key:
+    raise SystemExit(f"Missing LANGCHAIN_API_KEY in ENV FILE")
+elif not cohere_api_key:
+    raise SystemExit(f"Missing COHERE_API_KEY in ENV FILE")
+
+groq_client = Groq(api_key=groq_api_key)
+
+# initialize vectorstore at module level
+# ==============================
+# ====Split,load,embed==========
+# ==============================
+
+openai_embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+vectorstore = Chroma(
+    collection_name="my_collection",
+    persist_directory="chroma_db",
+    embedding_function=openai_embeddings
+)
+
 
 def load_file(filepath, role):
     
@@ -54,7 +91,7 @@ def embed_documents_to_vectorstore(docs):
     print("Documents embedded and saved to vectorstore.")
     print("Total documents:", len(vectorstore.get()["documents"]))
 
-# This function is defined to index any existing documents in the database that haven't been embedded yet.
+# This function is defined to index any existing documents in the vectorstore that haven't been embedded yet.
 def index_unembedded_document():
     
     sqlite_conn = get_sqlite_conn()

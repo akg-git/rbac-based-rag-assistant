@@ -7,7 +7,7 @@ import bcrypt
 SQLITE_DB_PATH = Path("app\\schemas\\roles_docs.db")
 sqlite_conn = sqlite3.connect(str(SQLITE_DB_PATH), check_same_thread=False)
 
-def _init_sqlite(conn: sqlite3.Connection = sqlite_conn) -> None:
+def init_sqlite(conn: sqlite3.Connection = sqlite_conn) -> None:
     cur = conn.cursor()
     cur.executescript(
         """
@@ -56,7 +56,7 @@ def create_default_user():
 
 
 # initialize sqlite schema at import time
-_init_sqlite()
+init_sqlite()
 
 # create default user at import time
 create_default_user()
