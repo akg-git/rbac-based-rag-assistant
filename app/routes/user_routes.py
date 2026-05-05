@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, Form, HTTPException
 from app.authentication.auth import authenticate
 from app.schemas.sqlitedb import get_sqlite_conn
-from passlib.hash import bcrypt
+from passlib.hash import bcrypt_sha256
 import sqlite3
 
 router = APIRouter()
@@ -37,7 +37,9 @@ def create_user(
         raise HTTPException(status_code=400, detail="Invalid role specified.")
     
     # Hash password before storing
-    hashed_password = bcrypt.hash(password)
+    # hashed_password = bcrypt.hash(password)
+    hashed_password = bcrypt_sha256.hash(password)
+    bcrypt_sha256.verify(password, hashed_password)
 
     try:
         c.execute("INSERT INTO users (username, password, role) VALUES (?, ?, ?)", 

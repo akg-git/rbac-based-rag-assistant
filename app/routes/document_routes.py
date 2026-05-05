@@ -12,7 +12,7 @@ router = APIRouter()
 
 UPLOAD_DIR = "static/uploads/"
 
-@router.post("/upload-docs/")
+@router.post("/upload-docs")
 async def upload_docs(file: UploadFile = File(...), role: str = Form(...)):
 
     try: 

@@ -1,7 +1,7 @@
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from passlib.hash import bcrypt
-from schemas.sqlitedb import get_sqlite_conn
+from app.schemas.sqlitedb import get_sqlite_conn
 
 security = HTTPBasic()
 

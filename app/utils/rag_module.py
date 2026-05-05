@@ -1,15 +1,22 @@
 from fastapi import HTTPException, Path
 from groq import Groq
 import pandas as pd
-from app.schemas.sqlitedb import get_sqlite_conn
 
 from dotenv import load_dotenv
 import os
+import chromadb
+import chromadb.utils.embedding_functions as embedding_functions
 
-from langchain_core.embeddings import OpenAIEmbeddings
+from app.schemas.sqlitedb import get_sqlite_conn
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import Chroma
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_groq import ChatGroq
+from langchain_classic.chains.combine_documents import create_stuff_documents_chain
+from langchain_classic.chains import create_retrieval_chain
+from langchain_cohere import CohereRerank
+# from langchain.retrievers import ContextualCompressionRetriever
+# from langchain_community.retrievers import ContextualCompressionRetriever
 
 
 load_dotenv()
@@ -18,9 +25,10 @@ os.environ["LANGCHAIN_TRACING_V2"] = "true"
 os.environ["LANGCHAIN_ENDPOINT"] = "https://api.smith.langchain.com"
 os.environ["LANGCHAIN_PROJECT"] = "RAG"
 
-langchain_key = os.getenv["LANGCHAIN_API_KEY"]
+langchain_key = os.getenv("LANGCHAIN_API_KEY")
 groq_api_key = os.getenv("GROQ_API_KEY")
-cohere_api_key = os.environ["COHERE_API_KEY"]
+cohere_api_key = os.getenv("COHERE_API_KEY")
+hf_api_key = os.getenv("HF_API_KEY")
 
 if not groq_api_key:
     # raise SystemExit(f"Missing GROQ_API_KEY in {ENV_FILE}")
@@ -37,13 +45,19 @@ groq_client = Groq(api_key=groq_api_key)
 # ====Split,load,embed==========
 # ==============================
 
-openai_embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
-vectorstore = Chroma(
-    collection_name="my_collection",
-    persist_directory="chroma_db",
-    embedding_function=openai_embeddings
+# Create the embedding function
+hf_embeddings = embedding_functions.HuggingFaceEmbeddingFunction(
+    api_key=hf_api_key,
+    model_name="sentence-transformers/all-MiniLM-L6-v2"
 )
 
+# Create a ChromaDB collection with this function
+client = chromadb.Client()
+vectorstore = client.get_or_create_collection(
+    name="my_huggingface_collection",
+    # schema="chroma_db",
+    embedding_function=hf_embeddings
+)
 
 def load_file(filepath, role):
     
@@ -131,3 +145,96 @@ def index_unembedded_document():
             print(f"Error occurred while embedding documents: {e}")
             sqlite_conn.rollback()
 
+
+# PROMPT TEMPLATE
+system_prompt = (
+    "You are an assistant for summarizing and answering queries from internal company documents.\n"
+    "Always use the retrieved context to answer the query, even if partial.\n"
+    "Do not guess. If data is not found, explain what you searched for.\n"
+    "When responding:\n"
+    "- Add **Source** from document metadata if possible.\n"
+    "- Use headers\n"
+    "- Use bullet points\n"
+    "- For CSV-style data, format in table with two columns\n"
+    "\n{context}"
+)
+
+chat_prompt = ChatPromptTemplate.from_messages([
+    ("system", system_prompt),
+    ("human", "{input}"),
+])
+
+# Model
+model = ChatGroq(
+    groq_api_key=groq_api_key,
+    model_name="gpt-oss-20b",
+    temperature=0.2
+)
+
+chatting_chain = create_stuff_documents_chain(llm=model, prompt=chat_prompt)
+
+# Re-ranker function to re-rank retrieved documents based on relevance to the query
+def wrap_with_reranker(retriever, cohere_api_key, top_n=4):
+
+    # Create Cohere's reranker with the vector DB using the base retriever
+    reranker = CohereRerank(
+        cohere_api_key=cohere_api_key, 
+        model="rerank-english-v3.0", 
+        top_n=top_n
+    )
+
+    return reranker;
+
+    # compression of retriever to get more relevant results
+    # compression_retriever = ContextualCompressionRetriever(
+    #     base_compressor=reranker, 
+    #     base_retriever=retriever
+    # )
+
+    # return compression_retriever
+
+
+def get_rag_chain(user_role: str, cohere_api_key: str = None):
+    user_role = user_role.lower()
+
+    # c-level users can access all documents and have more detailed responses
+    if user_role == "c-level":
+        # retieve k most relevant documents
+        retriever = vectorstore.as_retriever(search_kwargs = {"k": 4})
+    
+    # genral role users can only access documents tagged with genral
+    elif user_role == "general":
+        retriever = vectorstore.as_retriever(search_kwargs = {
+            "k": 4,
+            "filter": {"role": "general"}
+        })
+    # remaining users can see corresposnding tagged docuemnts alongside general dcouments
+    else:
+        retriever = vectorstore.as_retriever(search_kwargs = {
+            "k": 4,
+            "filter": {
+                "$in": {"role": [user_role, "general"]}
+            }
+        })
+    
+    # wrap with re-ranker using cohere reranking model
+    if cohere_api_key:
+        retriever = wrap_with_reranker(retriever, cohere_api_key)
+    return create_retrieval_chain(retriever, chatting_chain)
+
+
+
+# ========== MAIN EXECUTION ==========
+if __name__ == "__main__":
+    index_unembedded_document() 
+
+    user_role = "hr" 
+    rag_chain = get_rag_chain(user_role)
+
+    
+    query = "give me Campaign Highlights from marketing summary."
+    response = rag_chain.invoke({"input": query})
+
+    print((response["answer"]))
+    for doc in response.get("context", []):
+        print(f"Source: {doc.metadata['source']}, Role: {doc.metadata.get('role')}")
