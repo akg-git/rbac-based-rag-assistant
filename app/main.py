@@ -5,10 +5,12 @@ from fastapi import FastAPI
 # import DB connections from central module (initialises on import)
 from app.schemas.duckdb import (
     init_duckdb,
+    get_duckdb_conn
 )
 
 from app.schemas.sqlitedb import (
     init_sqlite,
+    get_sqlite_conn
 )
 
 # Import all routers
@@ -30,3 +32,10 @@ def startup():
 app.include_router(document_router, tags=["Documents"])
 app.include_router(user_router, tags=["Users"])
 app.include_router(chat_router, tags=["Chat"])
+
+# @app.on_event("shutdown")
+# async def shutdown_event():
+#     """Close database connections on app shutdown"""
+#     get_sqlite_conn().close()
+#     get_duckdb_conn().close()
+#     print("✅ SQLite and DuckDB connections closed")

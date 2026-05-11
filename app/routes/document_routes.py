@@ -96,9 +96,9 @@ async def upload_docs(file: UploadFile = File(...), role: str = Form(...)):
         sqlite_conn.rollback()
         raise Exception(status_code=500, detail=f"An error occurred while uploading the file: {e}")
     
-    finally:
-        # ensure connections are closed after operation
-        duck_conn.close()
-        sqlite_conn.close()
+    # finally:
+    #     # ensure connections are closed after operation
+    #     duck_conn.close()
+    #     sqlite_conn.close()
 
 

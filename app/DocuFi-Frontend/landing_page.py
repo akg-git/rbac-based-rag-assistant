@@ -4,7 +4,7 @@ import requests
 from requests.auth import HTTPBasicAuth
 from bg_images import set_bg_from_local
 from login_handler import login_page
-
+from roles import fetch_roles
 
 API_URL = "http://localhost:8000"
 
@@ -16,6 +16,8 @@ st.set_page_config(page_title="FinSolve Data Assistant", page_icon="🤖",layout
 # -------------------------
 # SESSION INIT
 # -------------------------
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
 if "auth" not in st.session_state:
     st.session_state.auth = None
 if "role" not in st.session_state:
@@ -23,28 +25,52 @@ if "role" not in st.session_state:
 if "page" not in st.session_state:
     st.session_state.page = "login"
 
+# st.session_state.auth = (username, password) if st.session_state.auth else None
+
 # Fetch available roles from backend
-def fetch_roles():
-    try:
-        res = requests.get(f"{API_URL}/roles", auth=HTTPBasicAuth(st.session_state.auth))
-        if res.status_code == 200:
-            return res.json().get("roles", [])
-    except Exception as e:
-        st.error(f"Error fetching roles: {e}")
-    return []
+# def fetch_roles():
+#     try:
+#         res = requests.get(
+#             f"{API_URL}/roles", 
+#             auth=HTTPBasicAuth(*st.session_state.auth)
+#             # auth=HTTPBasicAuth(st.session_state.username, st.session_state.password)
+#         )
+#         if res.status_code == 200:
+#             return res.json().get("roles", [])
+#     except Exception as e:
+#         st.error(f"Error fetching roles: {e}")
+#     return []
 
-# Two-column layout
-left_col, right_col = st.columns([7,1])
+if not st.session_state.logged_in:
 
-# calling login page function to render login page if user is not authenticated
-login_page(fetch_roles)
+    # # calling login page function to render login page if user is not authenticated
+    auth_response = login_page()
+
+    if auth_response:
+
+        if auth_response["success"]:
+
+            st.session_state["logged_in"] = True
+            st.session_state["username"] = auth_response["username"]
+            st.session_state["password"] = auth_response["password"]
+            st.session_state["role"] = auth_response["role"]
+            st.session_state["page"] = auth_response["page"]
+
+            st.success("Login successful")
+            st.rerun()
+
+        else:
+            st.rerun()
 
 if st.session_state.page == "main":
     st.title("Welcome to FinSolve Data Assistant! 🤖")
     st.write("Your personal assistant for data insights and analysis. Please log in to access your personalized dashboard and start asking questions about your data.")
 
-    username = st.session_state.username
-    role = st.session_state.role
+    # Two-column layout (for user info and tabs)
+    left_col, right_col = st.columns([7,1])
+
+    username = st.session_state.get("username")
+    role = st.session_state.get("role")
 
     with right_col:
         # st.subheader(f"Welcome, {username}! 👋")
@@ -79,12 +105,84 @@ if st.session_state.page == "main":
 
     if role.lower() == "c-level":
 
-        ## Admin Tab for C-Level ##        [INCOMPLETE ADMIN TAB]
+        ## Admin Tab for C-Level ##
         with admin_tab:
+
+            get_available_roles = fetch_roles(API_URL, st.session_state.auth)
+
+            ## ADD USER FUNCTIONALITY
             st.subheader("➕ Add User")
-            username = st.text_input("Username", key="new_user_username")
-            password = st.text_input("Password", key="new_user_password", type="password")
-            role = st.selectbox("Assign Role", role)
+            username = st.text_input("Username", key="new_user_username").strip()
+            password = st.text_input("Password", key="new_user_password", type="password").strip()
+            role = st.selectbox("Assign Role", get_available_roles, key="new_user_role")
+
+            if st.button("Create User", key="create-usr-btn"):
+
+                res = requests.post(
+                    f"{API_URL}/create-user",
+                    data = {
+                        "username": username,
+                        "password": password,
+                        "role": role
+                    },
+                    auth = HTTPBasicAuth(*st.session_state.auth)
+                )
+
+                if res.ok:
+                    st.success(f"User '{username}' created with role '{role}'. ")
+                else:
+                    st.error(f"Error while creating user: {res.status_code} - {res.text}")
+                    st.error(res.json().get("detail", "User creation failed!!"))
+
+            ## CREATE ROLE FUNCTIONALITY
+            st.subheader("🧑‍💻 Create New Role")
+            new_role = st.text_input("Role Name", key="new-role-name").strip()
+
+            if st.button("Add Role", key="add-role-btn"):
+                
+                res = requests.post(
+                    f"{API_URL}/create-role",
+                    data={"role_name": new_role},
+                    auth=HTTPBasicAuth(*st.session_state.auth)
+                )
+
+                if res.ok:
+                    st.success(res.json()["message"])
+                    st.session_state.roles = fetch_roles(API_URL, st.session_state.auth)
+                    st.rerun() 
+                    st.success(f"Role - '{new_role}' created successfully.")
+                else:
+                    st.error(f"Error while creating new role: {res.status_code} - {res.text}")
+                    st.error(res.json().get("detail", "Role creation failed!!"))
+
+        ## Upload Tab for C-Level ##
+        with upload_tab:
+            st.subheader("📤 Upload Documents")
+
+            get_role = requests.get(
+                f"{API_URL}/roles",
+                auth=HTTPBasicAuth(*st.session_state.auth)
+            )
+
+            roles = st.session_state.roles
+            selected_role = st.selectbox("Select Role for Document Access", roles, key="upload-doc-role")
+            doc_file = st.file_uploader("Choose a document to upload [.md or .csv]", type=["csv", "md"], key="doc-uploader")
+
+            if st.button("Upload Document", key="upload-doc-btn"):
+                res = requests.post(
+                    f"{API_URL}/upload-docs",
+                    files={"file": doc_file},
+                    data={"role":selected_role},
+                    auth=HTTPBasicAuth(*st.session_state.auth)
+                )
+
+                if res.ok:
+                    st.success("✅ Document uploaded successfully!")
+                else:
+                    st.error(f"Error uploading document: {res.status_code} - {res.text}")
+                    st.error(res.json().get("detail", "Document upload failed!!"))
+
+
 
     ## Chat Tab Funcationality ##
     with chat_tab:
@@ -96,7 +194,7 @@ if st.session_state.page == "main":
                 res = requests.post(
                     f"{API_URL}/chat",
                     json={"question": question, "role": role},
-                    auth=HTTPBasicAuth(st.session_state.auth)
+                    auth=HTTPBasicAuth(*st.session_state.auth)
                 )
 
                 st.markdown("**Answer:**")
@@ -118,4 +216,4 @@ if st.session_state.page == "main":
             else:
                 st.warning("Please enter a question before submitting.")
     
-        ## Upload Tab for C-Level ##
+        

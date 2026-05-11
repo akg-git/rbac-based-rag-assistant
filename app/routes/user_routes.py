@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, Form, HTTPException
 from app.authentication.auth import authenticate
 from app.schemas.sqlitedb import get_sqlite_conn
-from passlib.hash import bcrypt_sha256
+from argon2.exceptions import VerifyMismatchError
+from app.authentication.hashing import hash_password, verify_password
 import sqlite3
 
 router = APIRouter()
@@ -13,6 +14,18 @@ def login(user = Depends(authenticate)):
         "message": f"Welcome {user['username']}!",
         "role": user["role"]
     }
+
+@router.get("/roles")
+def get_roles(user=Depends(authenticate)):
+
+    # Get a cursor for the SQLite connection
+    conn = get_sqlite_conn()
+    c = conn.cursor()
+
+    #fetch all roles from roles table
+    c.execute("SELECT role_name FROM roles")
+    roles = [r[0] for r in c.fetchall()]
+    return {"roles": roles}
 
 # Create a new user
 @router.post("/create-user")
@@ -35,11 +48,19 @@ def create_user(
 
     if not c.fetchone():
         raise HTTPException(status_code=400, detail="Invalid role specified.")
+
+    # Hash password before storing
+    hashed_password = hash_password(password)
     
     # Hash password before storing
-    # hashed_password = bcrypt.hash(password)
-    hashed_password = bcrypt_sha256.hash(password)
-    bcrypt_sha256.verify(password, hashed_password)
+    # hashed_password = PasswordHasher().hash(password)
+    
+    try:
+        # PasswordHasher().verify(password, hashed_password)
+        verify_password(password, hashed_password)
+        print("✅ Password hashing and verification successful.")
+    except VerifyMismatchError:
+        print("❌ Invalid Password")
 
     try:
         c.execute("INSERT INTO users (username, password, role) VALUES (?, ?, ?)", 
@@ -72,5 +93,5 @@ def create_role(
         return {"message": f"Role '{role_name}' created successfully."}
     except sqlite3.IntegrityError:
         raise HTTPException(status_code=400, detail="Role already exists.")
-    finally:
-        conn.close()
+    # finally:
+    #     conn.close()
