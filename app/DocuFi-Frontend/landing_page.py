@@ -27,20 +27,6 @@ if "page" not in st.session_state:
 
 # st.session_state.auth = (username, password) if st.session_state.auth else None
 
-# Fetch available roles from backend
-# def fetch_roles():
-#     try:
-#         res = requests.get(
-#             f"{API_URL}/roles", 
-#             auth=HTTPBasicAuth(*st.session_state.auth)
-#             # auth=HTTPBasicAuth(st.session_state.username, st.session_state.password)
-#         )
-#         if res.status_code == 200:
-#             return res.json().get("roles", [])
-#     except Exception as e:
-#         st.error(f"Error fetching roles: {e}")
-#     return []
-
 if not st.session_state.logged_in:
 
     # # calling login page function to render login page if user is not authenticated
@@ -154,6 +140,8 @@ if st.session_state.page == "main":
                 else:
                     st.error(f"Error while creating new role: {res.status_code} - {res.text}")
                     st.error(res.json().get("detail", "Role creation failed!!"))
+            
+            ## UPDATE ROLE FUNCTIONALITY
 
         ## Upload Tab for C-Level ##
         with upload_tab:

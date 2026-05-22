@@ -52,9 +52,6 @@ def create_user(
     # Hash password before storing
     hashed_password = hash_password(password)
     
-    # Hash password before storing
-    # hashed_password = PasswordHasher().hash(password)
-    
     try:
         # PasswordHasher().verify(password, hashed_password)
         verify_password(password, hashed_password)
@@ -69,9 +66,10 @@ def create_user(
 
         return {"message": f"User '{username}' created with role '{role}'."}
     except sqlite3.IntegrityError:
+        conn.rollback()
         raise HTTPException(status_code=400, detail="User already exists.")
-    finally:
-        conn.close()
+    # finally:
+    #     conn.close()
 
 # create a new role
 @router.post("/create-role")
@@ -92,6 +90,15 @@ def create_role(
         conn.commit()
         return {"message": f"Role '{role_name}' created successfully."}
     except sqlite3.IntegrityError:
+        conn.rollback()
         raise HTTPException(status_code=400, detail="Role already exists.")
     # finally:
     #     conn.close()
+
+# Logout handler
+@router.get("/logout")
+def logout(user = Depends(authenticate)):
+    return {
+        "message": f"Welcome {user['username']}!",
+        "role": user["role"]
+    }
