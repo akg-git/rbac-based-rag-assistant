@@ -35,10 +35,18 @@ def get_allowed_tables_for_role(role:str) -> list[str]:
         query = "SELECT table_name FROM tables_metadata WHERE role = 'engineer'"
         return [ row[0] for row in duck_conn.execute(query).fetchall()]
     
+    elif role == "finance":
+        query = "SELECT table_name FROM tables_metadata WHERE role = 'finance'"
+        return [ row[0] for row in duck_conn.execute(query).fetchall()]
+    
+    elif role == "marketing":
+        query = "SELECT table_name FROM tables_metadata WHERE role = 'marketing'"
+        return [ row[0] for row in duck_conn.execute(query).fetchall()]
+    
     else:
         query = """
         SELECT table_name FROM tables_metadata
-        WHERE role = ? OR role = 'general' OR role = 'hr' OR role = 'engineer'
+        WHERE role = ? OR role = 'general'
         """
         return [row[0] for row in duck_conn.execute(query, [role]).fetchall()]
 

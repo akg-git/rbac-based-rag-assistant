@@ -5,8 +5,6 @@ import pandas as pd
 
 from dotenv import load_dotenv
 import os
-import chromadb
-# import chromadb.utils.embedding_functions as embedding_functions
 
 from app.schemas.sqlitedb import get_sqlite_conn
 from langchain_core.documents import Document
@@ -306,7 +304,7 @@ def get_rag_chain(user_role: str, cohere_api_key: str = None):
         retriever = vectorstore.as_retriever(search_kwargs = {
             "k": 4,
             "filter": {
-                "$in": {"role": [user_role, "general"]}
+                "role": {"$in": [user_role, "general"]}
             }
         })
     

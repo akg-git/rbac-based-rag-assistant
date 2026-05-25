@@ -48,7 +48,7 @@ if not st.session_state.logged_in:
         else:
             st.rerun()
 
-if st.session_state.page == "main":
+if st.session_state.page == "main" and st.session_state.logged_in:
     st.title("Welcome to FinSolve Data Assistant! 🤖")
     st.write("Your personal assistant for data insights and analysis. Please log in to access your personalized dashboard and start asking questions about your data.")
 
@@ -64,9 +64,12 @@ if st.session_state.page == "main":
         st.markdown(f"**👤 User:** `{username}`  \n**🛡️ Role:** `{role}`")
         # -- Logout button --
         if st.button(" 🚪 Logout", key="logout_button"):
+            st.session_state.logged_in = False
             st.session_state.auth = None
+            st.session_state.username = None
             st.session_state.role = None
             st.session_state.page = "login"
+            st.success("Logged out successfully!")
             st.rerun()
     
     # -- Main content area --
