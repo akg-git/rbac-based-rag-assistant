@@ -1,7 +1,7 @@
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
-from passlib.hash import bcrypt
-from schemas.sqlitedb import get_sqlite_conn
+from app.authentication.hashing import verify_password
+from app.schemas.sqlitedb import get_sqlite_conn
 
 security = HTTPBasic()
 
@@ -16,11 +16,18 @@ def authenticate(credentials: HTTPBasicCredentials = Depends(security)):
 
     c.execute("SELECT password, role FROM users WHERE username = ?", (username,))
     row = c.fetchone()
-    conn.commit()
-    conn.close()
 
     # print("DB row:", row)
     
-    if not row or not bcrypt.verify(password, row[0]):
+    if not row:
         raise HTTPException(status_code=401, detail="Invalid credentials")
+    
+    stored_hash = row[0]
+
+    if not verify_password(password, stored_hash):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid credentials"
+        )
+    
     return {"username": username, "role": row[1]}

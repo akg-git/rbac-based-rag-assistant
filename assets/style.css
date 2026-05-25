@@ -317,3 +317,38 @@ div.media {
 .filter__label {
   margin-right: 10px;
 }
+
+/* search button styling */
+.search-form {
+    display: flex;
+    align-items: center;
+    border: 1px solid #ccc;
+    border-radius: 25px;
+    padding: 5px 10px;
+    background-color: white;
+}
+.search-input input {
+    border: none !important;
+    outline: none !important;
+    width: 100%;
+    font-size: 16px;
+    padding-left: 10px;
+}
+.search-button button {
+    background-color: #00bfa5 !important;
+    color: white !important;
+    border-radius: 20px !important;
+    padding: 6px 16px !important;
+    font-weight: bold;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.search-button img {
+    width: 20px;
+    height: 20px;
+    margin-left: 5px;
+}
+.search-button button:hover {
+    background-color: #009e8f !important;
+}

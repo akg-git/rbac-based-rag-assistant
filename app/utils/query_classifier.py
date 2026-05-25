@@ -1,9 +1,9 @@
 # Query Classification Utility
 
 import os
-from openai import OpenAI
+from groq import Groq
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
 def detect_query_mode(question: str) -> str:
     question_lower = question.lower()
@@ -29,7 +29,7 @@ def detect_query_mode(question: str) -> str:
         """
 
     response = client.chat.completions.create(
-        model="gpt-4",
+        model="meta-llama/llama-prompt-guard-2-22m",
         messages=[{"role": "user", "content": prompt}],
         temperature=0
     )
