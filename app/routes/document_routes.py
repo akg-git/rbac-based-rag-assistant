@@ -1,4 +1,5 @@
 import os
+from pathlib import Path as PathlibPath
 from fastapi import APIRouter, File, Form, Path, UploadFile, HTTPException
 from fastapi.responses import JSONResponse
 import pandas as pd
@@ -54,7 +55,7 @@ async def upload_docs(file: UploadFile = File(...), role: str = Form(...)):
 
             #load from DuckDB
             file_df = pd.read_csv(filepath)
-            table_name = Path(filepath).stem.replace("-", "_").lower()
+            table_name = PathlibPath(filepath).stem.replace("-", "_").lower()
 
             #save metadata to DuckDB
             headers = file_df.columns.tolist()
