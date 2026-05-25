@@ -20,7 +20,7 @@ def init_duckdb():
         """
         CREATE TABLE IF NOT EXISTS tables_metadata (
                 table_name TEXT,
-                roles TEXT          
+                role TEXT          
         )
         """
     )

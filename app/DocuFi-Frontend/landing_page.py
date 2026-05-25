@@ -5,6 +5,7 @@ from requests.auth import HTTPBasicAuth
 from bg_images import set_bg_from_local
 from login_handler import login_page
 from roles import fetch_roles
+from ui_utility_page import verify_user_with_role
 
 API_URL = "http://localhost:8000"
 
@@ -24,6 +25,10 @@ if "role" not in st.session_state:
     st.session_state.role = None
 if "page" not in st.session_state:
     st.session_state.page = "login"
+if "delete_confirm" not in st.session_state:
+    st.session_state.delete_confirm = False
+if "delete_user_data" not in st.session_state:
+    st.session_state.delete_user_data = {"username": "", "role": ""}
 
 # st.session_state.auth = (username, password) if st.session_state.auth else None
 
@@ -99,31 +104,98 @@ if st.session_state.page == "main" and st.session_state.logged_in:
 
             get_available_roles = fetch_roles(API_URL, st.session_state.auth)
 
-            ## ADD USER FUNCTIONALITY
-            st.subheader("➕ Add User")
-            username = st.text_input("Username", key="new_user_username").strip()
-            password = st.text_input("Password", key="new_user_password", type="password").strip()
-            role = st.selectbox("Assign Role", get_available_roles, key="new_user_role")
+            # ==================== ADD USER & DELETE USER SECTION ====================
+            # Create two columns: left for Add User, right for Delete User
+            col_add, col_delete = st.columns(2)
 
-            if st.button("Create User", key="create-usr-btn"):
+            # ==================== LEFT COLUMN: ADD USER FUNCTIONALITY ====================
+            with col_add:
+                st.subheader("➕ Add User")
+                username = st.text_input("Username", key="new_user_username").strip()
+                password = st.text_input("Password", key="new_user_password", type="password").strip()
+                role = st.selectbox("Assign Role", get_available_roles, key="new_user_role")
 
-                res = requests.post(
-                    f"{API_URL}/create-user",
-                    data = {
-                        "username": username,
-                        "password": password,
-                        "role": role
-                    },
-                    auth = HTTPBasicAuth(*st.session_state.auth)
-                )
+                if st.button("Create User", key="create-usr-btn"):
 
-                if res.ok:
-                    st.success(f"User '{username}' created with role '{role}'. ")
-                else:
-                    st.error(f"Error while creating user: {res.status_code} - {res.text}")
-                    st.error(res.json().get("detail", "User creation failed!!"))
+                    res = requests.post(
+                        f"{API_URL}/create-user",
+                        data = {
+                            "username": username,
+                            "password": password,
+                            "role": role
+                        },
+                        auth = HTTPBasicAuth(*st.session_state.auth)
+                    )
+
+                    if res.ok:
+                        st.success(f"User '{username}' created with role '{role}'. ")
+                    else:
+                        st.error(f"Error while creating user: {res.status_code} - {res.text}")
+                        st.error(res.json().get("detail", "User creation failed!!"))
+
+            # ==================== RIGHT COLUMN: DELETE USER FUNCTIONALITY ====================
+            with col_delete:
+                st.subheader("🗑️ Delete User")
+                delete_role = st.selectbox("User's Role", get_available_roles, key="delete_user_role")
+                delete_username = st.text_input("Username", key="delete_user_username").strip()
+
+                if st.button("Delete User", key="delete-usr-btn"):
+                    if delete_username:
+                        # Verify user exists before showing confirmation
+                        verification = verify_user_with_role(delete_username, delete_role, st.session_state.auth)
+                        
+                        if verification["exists"]:
+                            # Set the user data and show confirmation
+                            st.session_state.delete_user_data = {"username": delete_username, "role": delete_role}
+                            st.session_state.delete_confirm = True
+                        else:
+                            st.error(verification["message"])
+                    else:
+                        st.warning("Please enter a username to delete.")
+
+            # ==================== CONFIRMATION DIALOG ====================
+            if st.session_state.delete_confirm:
+                st.divider()
+                st.warning("⚠️ **Confirm User Deletion**")
+                confirmation_msg = f"""
+                Are you sure you want to delete the user **'{st.session_state.delete_user_data['username']}'** from the **{st.session_state.delete_user_data['role']}** role?
+                
+                **This action cannot be undone!**
+                """
+                st.markdown(confirmation_msg)
+                
+                confirm_col1, confirm_col2 = st.columns(2)
+                with confirm_col1:
+                    if st.button("✅ Confirm Delete", key="confirm-delete-btn"):
+                        # Make API call to delete user
+                        res = requests.post(
+                            f"{API_URL}/delete-user",
+                            data={
+                                "username": st.session_state.delete_user_data["username"],
+                                "role": st.session_state.delete_user_data["role"]
+                            },
+                            auth=HTTPBasicAuth(*st.session_state.auth)
+                        )
+
+                        if res.ok:
+                            st.success(f"User '{st.session_state.delete_user_data['username']}' deleted successfully!")
+                            st.session_state.delete_confirm = False
+                            st.session_state.delete_user_data = {"username": "", "role": ""}
+                        else:
+                            st.error(f"Error deleting user: {res.status_code} - {res.text}")
+                            try:
+                                st.error(res.json().get("detail", "User deletion failed!!"))
+                            except:
+                                st.error("User deletion failed!!")
+
+                with confirm_col2:
+                    if st.button("❌ Cancel", key="cancel-delete-btn"):
+                        st.session_state.delete_confirm = False
+                        st.session_state.delete_user_data = {"username": "", "role": ""}
+                        st.rerun()
 
             ## CREATE ROLE FUNCTIONALITY
+            st.divider()
             st.subheader("🧑‍💻 Create New Role")
             new_role = st.text_input("Role Name", key="new-role-name").strip()
 
