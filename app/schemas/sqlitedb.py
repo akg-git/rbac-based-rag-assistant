@@ -65,7 +65,7 @@ def create_default_user(conn: sqlite3.Connection = sqlite_conn) -> None:
         conn.commit()
         print("✅ Default C-Level user created.")
     except sqlite3.IntegrityError:
-        print("⚠️ User already exists.")
+        print("⚠️ Default User already exists.")
     except Exception as e:
         print(f"❌ Error creating default user: {type(e).__name__}: {e}")
         conn.rollback()
