@@ -1,0 +1,28 @@
+question,answer,role,source
+What is the primary cloud provider utilized by FinSolve Technologies?,AWS,engineering,engineering_master_doc.md
+What is the name of the industry-standard protocol for authorization used by FinSolve?,OAuth 2.0,engineering,engineering_master_doc.md
+What is the purpose of the FinSolve Technologies engineering document?,"To outline the technical architecture, development processes, and operational guidelines for FinSolve's product ecosystem.",engineering,engineering_master_doc.md
+What was the year-over-year revenue growth for FinSolve Technologies in 2024?,25%,finance,financial_summary.md
+What was the total expense for vendor services in 2024?,$30M,finance,financial_summary.md
+What was the gross margin for FinSolve Technologies in 2024?,60%,finance,financial_summary.md
+What was the total revenue for FinSolve Technologies Inc. in 2024?,$9.4 billion,finance,quarterly_financial_report.md
+What was the gross margin in Q4 2024?,64%,finance,quarterly_financial_report.md
+How much was allocated to research and development (R&D) and market expansion initiatives in Q1 2024?,$50 million,finance,quarterly_financial_report.md
+What is the company's vision?,To empower businesses and individuals through innovative technology solutions.,general,employee_handbook.md
+How many days of sick leave are employees entitled to per year?,12 days,general,employee_handbook.md
+What is the process for applying for maternity leave?,Submit application on HRMS with medical certificate at least 8 weeks before due date.,general,employee_handbook.md
+What was the percentage increase in new customer acquisition in 2024?,20%,marketing,marketing_report_2024.md
+What was the total marketing budget for FinSolve Technologies in 2024?,$15M,marketing,marketing_report_2024.md
+What was the return on investment (ROI) for digital campaigns in 2024?,3.5x,marketing,marketing_report_2024.md
+What was the total marketing spend for Q1 2024?,$2 million,marketing,marketing_report_q1_2024.md
+What was the customer acquisition target for Q1 2024?,"150,000 new customers",marketing,marketing_report_q1_2024.md
+What was the achieved conversion rate in Q1 2024?,10.2%,marketing,marketing_report_q1_2024.md
+What was the marketing spend for Q2 2024?,$2.5 million,marketing,marketing_report_q2_2024.md
+What was the customer acquisition target for Q2 2024?,"200,000 new customers",marketing,marketing_report_q2_2024.md
+What was the achieved conversion rate for Q2 2024?,12.1%,marketing,marketing_report_q2_2024.md
+What was the marketing spend for Q3 2024?,$2 million,marketing,marketing_report_q3_2024.md
+What was the customer acquisition target for Q3 2024?,"180,000 new customers",marketing,marketing_report_q3_2024.md
+What was the preliminary ROI for Q3 2024?,3.6x,marketing,marketing_report_q3_2024.md
+What was the marketing spend for Q4 2024?,$2.5 million,marketing,market_report_q4_2024.md
+What was the target conversion rate for Q4 2024?,15.0%,marketing,market_report_q4_2024.md
+How many new customers were targeted to be acquired in Q4 2024?,"220,000",marketing,market_report_q4_2024.md

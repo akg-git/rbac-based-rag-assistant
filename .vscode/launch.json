@@ -1,0 +1,55 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug Current Test File",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "unittest",
+            "args": ["${relativeFileDirname}.${fileBasenameNoExtension}"],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            }
+        },
+        {
+            "name": "Debug All Tests",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "unittest",
+            "args": [
+                "discover",
+                "-s",
+                "app/rag_evaluator/answer_quality/tests",
+                "-p",
+                "test_*.py",
+                "-v"
+            ],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            }
+        },
+        {
+            "name": "Debug with Pytest",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "pytest",
+            "args": [
+                "${relativeFile}",
+                "-v",
+                "-s"
+            ],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            }
+        }
+    ]
+}
