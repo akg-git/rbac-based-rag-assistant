@@ -128,14 +128,39 @@ class AnswerQualityEvaluator:
             )
             
             raw_output = response.choices[0].message.content.strip()
-            
+            cleaned_output = raw_output
+
+            if cleaned_output.startswith("```"):
+                cleaned_output = cleaned_output.strip("`")
+                if cleaned_output.lower().startswith("json"):
+                    cleaned_output = cleaned_output[4:].strip()
+
+            cleaned_output = cleaned_output.strip()
+
             try:
-                scores = json.loads(raw_output)
+                scores = json.loads(cleaned_output)
             except json.JSONDecodeError as e:
+                
                 logger.warning(f"JSON parsing failed: {e}. Raw output: {raw_output}")
                 scores = {metric: 0.5 for metric in REQUIRED_METRICS}
 
-            if not isinstance(scores, dict):
+            if isinstance(scores, list) and scores and isinstance(scores[0], dict):
+                scores = scores[0]
+
+            if isinstance(scores, dict):
+                normalized_scores = {}
+                for metric in REQUIRED_METRICS:
+                    value = scores.get(metric)
+                    if value is None:
+                        value = scores.get(metric.lower())
+                    if value is None:
+                        logger.warning(f"Missing metric: {metric}. Using default 0.5")
+                        normalized_scores[metric] = 0.5
+                    else:
+                        normalized_scores[metric] = value
+                scores = normalized_scores
+
+            else:
                 logger.warning(f"LLM response was not a JSON object, got {type(scores).__name__}; using default scores")
                 scores = {metric: 0.5 for metric in REQUIRED_METRICS}
             

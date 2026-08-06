@@ -23,11 +23,18 @@ class RBACSecurityEvaluator:
         permitted = sum(1 for act in query_actions if act in allowed)
         denied = len(query_actions) - permitted
 
+        role_match = 1.0 if permitted > 0 else 0.0
+        least_privilege = 1.0 if role_match and len(allowed) == 1 else 0.5 if role_match else 0.0
+        auditability = 1.0 if query_actions else 0.0
+
         return {
-            "compliance_score": permitted / len(query_actions) if query_actions else 1.0,
-            "violations": denied,
-            "permitted": permitted,
-            "total_actions": len(query_actions),
+            "compliance_score": float(permitted / len(query_actions)) if query_actions else 1.0,
+            "violations": float(denied),
+            "permitted": float(permitted),
+            "total_actions": float(len(query_actions)),
+            "role_match": role_match,
+            "least_privilege": least_privilege,
+            "auditability": auditability
         }
 
     def evaluate_session(self, role: str, session_queries: List[List[str]]) -> Dict[str, float]:

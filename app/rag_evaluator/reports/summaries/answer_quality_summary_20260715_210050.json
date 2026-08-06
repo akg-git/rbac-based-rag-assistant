@@ -1,8 +1,0 @@
-{
-    "samples": 30,
-    "faithfulness_avg": 0.517,
-    "relevance_avg": 0.943,
-    "clarity_avg": 0.917,
-    "completeness_avg": 0.86,
-    "embedding_similarity_avg": 1.0
-}

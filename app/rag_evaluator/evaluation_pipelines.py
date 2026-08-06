@@ -10,7 +10,9 @@ from pathlib import Path
 from datetime import datetime
 
 from app.rag_evaluator.answer_quality.runner import AnswerQualityRunner
-
+from app.rag_evaluator.retrieval.runner import RetrievalRunner
+from app.rag_evaluator.rbac_security.runner import RbacSecurityRunner
+from app.rag_evaluator.latency.runner import LatencyRunner
 
 # ==========================================
 # Configuration
@@ -50,6 +52,9 @@ class EvaluationPipeline:
             )
 
         self.answer_quality_runner = AnswerQualityRunner(report_dir=REPORT_DIR)
+        self.retrieval_runner = RetrievalRunner(report_dir=REPORT_DIR)
+        self.rbac_security_runner = RbacSecurityRunner(report_dir=REPORT_DIR)
+        self.latency_runner = LatencyRunner(report_dir=REPORT_DIR)
 
         self.groq_client = client
 
@@ -91,13 +96,16 @@ class EvaluationPipeline:
     # ==========================================
     # GENERATE QA PAIRS
     # ==========================================
-    def generate_qa_pairs(self, text_chunk, num_questions=10):
+    def generate_qa_pairs(self, text_chunk, num_questions=1):
+
+        # actual_prompt = """There are 10 documents present in total under resources/data with .md and .csv extensions, each document is associated with a specific role. Carefully visit each docuemnt and
+        #                 generate total {num_questions} unique factual questions across 10 docuemnts and exactly one question from each document that satisfy all conditions:"""
 
         prompt = f"""
                 You are generating evaluation questions for an enterprise RAG system.
 
-                There are 10 documents present in total under resources/data with .md and .csv extensions, each document is associated with a specific role. Carefully visit each docuemnt and
-                generate total {num_questions} unique factual questions across 10 docuemnts and exactly one question from each document that satisfy all conditions:
+                There are 5 departments present in total under resources/data with .md and .csv extensions, each departments is associated with a specific role. Carefully visit each departments and
+                generate total 5 unique factual QA pairs across departments that satisfy all conditions:
 
                 - answer must be concise
                 - answer should contain only necessary information
@@ -122,12 +130,6 @@ class EvaluationPipeline:
                 {{
                     "question": "My Question1",
                     "answer": "My Question1 answer"
-                }},{{
-                    "question": "My Question2",
-                    "answer": "My Question2 answer"
-                }},{{
-                    "question": "My Question3",
-                    "answer": "My Question3 answer"
                 }}
                 ]
                 """
@@ -184,12 +186,29 @@ class EvaluationPipeline:
                 print(f"Warning: only {len(qa_pairs)} questions generated for {doc['source']}")
 
             for qa in qa_pairs:
+                retrieved_docs = []
+                try:
+                    raw_hits = vectorstore.similarity_search(
+                        qa["question"],
+                        k=4,
+                        filter={"role": doc["role"]}
+                    )
+                    retrieved_docs = [hit.page_content for hit in raw_hits]
+                except Exception as retrieve_error:
+                    print(f"Retrieval lookup failed for '{qa['question']}': {retrieve_error}")
+
+                relevant_docs = [doc["content"]]
+                if not retrieved_docs:
+                    retrieved_docs = relevant_docs
 
                 qa_list.append({
                     "question": qa["question"],
                     "answer": qa["answer"],
                     "role": doc["role"],
-                    "source": doc["source"]
+                    "source": doc["source"],
+                    "retrieved_docs": retrieved_docs,
+                    "context": "\n".join(retrieved_docs),
+                    "relevant_docs": relevant_docs,
                 })
 
                 time.sleep(1.2)
@@ -202,18 +221,38 @@ class EvaluationPipeline:
 
         return qa_list
 
-    # ----------------------------------------------------
+
     # Run Answer Quality Evaluation
-    # ----------------------------------------------------
-
     def run_answer_quality_evaluation(self, qa_dataset):
-
         result_df, summary = self.answer_quality_runner.run(qa_dataset)
         print("Answer Quality Evaluation completed.")
         print("Summary:", summary)
 
         return result_df, summary
     
+
+    # Run Answer Quality Evaluation
+    def run_retrieval(self, qa_dataset):
+        result_df, summary = self.retrieval_runner.run(qa_dataset)
+        print("Retrieval Evaluation completed.")
+        print("Summary:", summary)
+
+        return result_df, summary
+
+    # Run RBAC Security Evaluation
+    def run_rbac_security(self, qa_dataset):
+        result_df, summary = self.rbac_security_runner.run(qa_dataset)
+        print("RBAC Security Evaluation completed.")
+        print("Summary:", summary)
+        return result_df, summary
+
+    # Run Latency Evaluation
+    def run_latency(self, functions_to_test):
+        result_df, summary = self.latency_runner.run(functions_to_test)
+        print("Latency Evaluation completed.")
+        print("Summary:", summary)
+        return result_df, summary
+
     # ----------------------------------------------------
     # Final Report Trigger
     # ----------------------------------------------------
@@ -232,7 +271,21 @@ class EvaluationPipeline:
         
         print("Running Answer Quality Evaluation...")
         self.run_answer_quality_evaluation(qa_dataset)
-        print("Evaluation completed successfully.")
+        print("Answer Quality Evaluation completed successfully.")
+
+        print("Running Retrieval Evaluation...")
+        self.run_retrieval(qa_dataset)
+        print("Retrieval Evaluation completed successfully.")
+
+        print("Running RBAC Security Evaluation...")
+        self.run_rbac_security(qa_dataset)
+        print("RBAC Evaluation completed successfully.")
+
+        print("Running Latency Evaluation...")
+        self.run_latency([
+            ("dummy_function", lambda x: x*2, [5], {}),
+        ])
+        print("Latency Evaluation completed successfully.")
 
 # ==========================================
 # Entry Point

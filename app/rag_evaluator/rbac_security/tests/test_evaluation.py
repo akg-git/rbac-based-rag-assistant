@@ -14,15 +14,35 @@ class TestRBACSecurityEvaluator(unittest.TestCase):
         self.assertTrue(self.evaluator.check_access("admin", "read_all"))
         self.assertFalse(self.evaluator.check_access("user", "delete"))
 
-    def test_evaluate_query_compliant(self):
-        result = self.evaluator.evaluate_query("user", ["read_own"])
+    def test_compliance_full_access(self):
+        result = self.evaluator.evaluate_query("admin", ["read_all"])
         self.assertEqual(result["compliance_score"], 1.0)
-        self.assertEqual(result["violations"], 0)
+        self.assertEqual(result["violations"], 0.0)
+        self.assertEqual(result["permitted"], 1.0)
+        self.assertEqual(result["total_actions"], 1.0)
 
-    def test_evaluate_query_violation(self):
-        result = self.evaluator.evaluate_query("guest", ["read_public", "delete"])
-        self.assertLess(result["compliance_score"], 1.0)
-        self.assertEqual(result["violations"], 1)
+    def test_compliance_partial_access(self):
+        result = self.evaluator.evaluate_query("user", ["read_own", "write_all"])
+        # user can only do "read_own"
+        self.assertEqual(result["compliance_score"], 0.5)
+        self.assertEqual(result["violations"], 1.0)
+        self.assertEqual(result["permitted"], 1.0)
+        self.assertEqual(result["total_actions"], 2.0)
+
+    def test_compliance_no_access(self):
+        result = self.evaluator.evaluate_query("user", ["write_all"])
+        self.assertEqual(result["compliance_score"], 0.0)
+        self.assertEqual(result["violations"], 1.0)
+        self.assertEqual(result["permitted"], 0.0)
+        self.assertEqual(result["total_actions"], 1.0)
+
+    def test_empty_query_actions(self):
+        result = self.evaluator.evaluate_query("admin", [])
+        # No actions requested → compliance_score defaults to 1.0
+        self.assertEqual(result["compliance_score"], 1.0)
+        self.assertEqual(result["violations"], 0.0)
+        self.assertEqual(result["permitted"], 0.0)
+        self.assertEqual(result["total_actions"], 0.0)
 
     def test_evaluate_session(self):
         session = [["read_own"], ["delete"], ["read_own", "read_all"]]

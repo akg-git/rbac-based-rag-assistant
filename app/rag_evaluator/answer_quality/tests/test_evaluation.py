@@ -98,6 +98,27 @@ class TestAnswerQualityEvaluator(unittest.TestCase):
         self.assertIsInstance(result["Clarity"], float)
 
     @patch("app.rag_evaluator.answer_quality.evaluator.Groq")
+    def test_llm_judge_with_markdown_wrapped_json(self, mock_groq):
+        """Test parsing when the model wraps JSON in markdown fences."""
+        mock_message = MagicMock()
+        mock_message.content = '```json\n{"Faithfulness": 1.0, "Relevance": 0.8, "Completeness": 0.8, "Clarity": 1.0}\n```'
+
+        mock_choice = MagicMock()
+        mock_choice.message = mock_message
+
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = MagicMock(choices=[mock_choice])
+        mock_groq.return_value = mock_client
+
+        result = self.evaluator.llm_judge("What is AI?", "AI is machine learning", "AI is ML")
+
+        for metric in ["Faithfulness", "Relevance", "Completeness", "Clarity"]:
+            self.assertIn(metric, result)
+            self.assertIsInstance(result[metric], float)
+            self.assertGreaterEqual(result[metric], 0.0)
+            self.assertLessEqual(result[metric], 1.0)
+
+    @patch("app.rag_evaluator.answer_quality.evaluator.Groq")
     def test_llm_judge_with_invalid_json(self, mock_groq):
         """Test fallback when LLM returns invalid JSON."""
         # Return invalid JSON

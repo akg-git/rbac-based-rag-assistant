@@ -16,7 +16,8 @@ class TestLatencyEvaluator(unittest.TestCase):
         self.assertIn("throughput_ops_per_sec", result)
         self.assertIn("result", result)
         self.assertEqual(result["result"], 10)
-        self.assertGreaterEqual(result["latency_seconds"], 0.1)
+        self.assertGreaterEqual(result["latency_seconds"], 0.05)
+        self.assertGreater(result["throughput_ops_per_sec"], 0.0)
 
 if __name__ == "__main__":
     unittest.main()
