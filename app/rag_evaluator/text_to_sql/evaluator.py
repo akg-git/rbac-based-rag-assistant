@@ -1,9 +1,9 @@
 # evaluator.py
 import re
 from typing import Dict, Any, List
-
 try:
     import sqlparse
+    from sqlparse.sql import IdentifierList, Identifier
 except ImportError:  # pragma: no cover - exercised when optional dep is missing
     sqlparse = None
 
@@ -14,6 +14,21 @@ class TextToSQLEvaluator:
         Example: {"users": ["id", "name", "email"], "orders": ["id", "user_id", "amount"]}
         """
         self.schema = schema
+
+    def _extract_columns(self, parsed_stmt) -> List[str]:
+        """Helper to extract column names from a parsed SQL statement."""
+        columns = []
+        for token in parsed_stmt.tokens:
+            if token.value.upper() == "FROM":
+                break
+            if isinstance(token, IdentifierList):
+                for identifier in token.get_identifiers():
+                    if identifier.get_name():
+                        columns.append(identifier.get_name().lower())
+            elif isinstance(token, Identifier):
+                if token.get_name():
+                    columns.append(token.get_name().lower())
+        return columns
 
     def validate_sql(self, sql: str) -> Dict[str, Any]:
         """
@@ -36,13 +51,10 @@ class TextToSQLEvaluator:
         result["valid_syntax"] = True
 
         if parsed:
+            stmt = parsed[0]
+            selected_cols = self._extract_columns(stmt)
+
             tokens = [t.value.lower() for t in parsed[0].tokens if not t.is_whitespace]
-            selected_cols = []
-            for token in parsed[0].tokens:
-                if token.ttype is None and hasattr(token, "get_name"):
-                    col = token.get_name()
-                    if col:
-                        selected_cols.append(col.lower())
             if not selected_cols:
                 selected_cols = [tok for tok in tokens if tok not in ["select", "from", ",", ";"]]
             table_name = None

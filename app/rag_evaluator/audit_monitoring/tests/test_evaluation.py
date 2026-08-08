@@ -5,11 +5,20 @@ class TestAuditMonitoringEvaluator(unittest.TestCase):
     def setUp(self):
         self.evaluator = AuditMonitoringEvaluator()
 
-    def test_log_event_and_retrieve(self):
+    def test_log_event_and_evaluate(self):
         self.evaluator.log_event("alice", "read_data", "granted")
-        logs = self.evaluator.get_logs()
-        self.assertEqual(len(logs), 1)
-        self.assertEqual(logs[0]["user"], "alice")
+        self.evaluator.log_event("bob", "delete_data", "denied")
+        result = self.evaluator.evaluate_security()
+
+        self.assertEqual(result["total_logs"], 2.0)
+        self.assertEqual(result["violations"], 1.0)
+        self.assertAlmostEqual(result["violation_rate"], 0.5)
+
+    def test_empty_logs(self):
+        result = self.evaluator.evaluate_security()
+        self.assertEqual(result["total_logs"], 0.0)
+        self.assertEqual(result["violations"], 0.0)
+        self.assertEqual(result["violation_rate"], 0.0)
 
     def test_evaluate_security(self):
         self.evaluator.log_event("bob", "delete_data", "denied")

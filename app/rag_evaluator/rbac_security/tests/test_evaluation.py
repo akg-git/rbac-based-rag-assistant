@@ -5,7 +5,7 @@ class TestRBACSecurityEvaluator(unittest.TestCase):
     def setUp(self):
         self.role_permissions = {
             "admin": ["read_all", "write_all", "delete"],
-            "user": ["read_own"],
+            "user": ["read_own", "read_public"],
             "guest": ["read_public"]
         }
         self.evaluator = RBACSecurityEvaluator(self.role_permissions)
@@ -37,12 +37,19 @@ class TestRBACSecurityEvaluator(unittest.TestCase):
         self.assertEqual(result["total_actions"], 1.0)
 
     def test_empty_query_actions(self):
-        result = self.evaluator.evaluate_query("admin", [])
+        result1 = self.evaluator.evaluate_query("admin", [])
         # No actions requested → compliance_score defaults to 1.0
-        self.assertEqual(result["compliance_score"], 1.0)
-        self.assertEqual(result["violations"], 0.0)
-        self.assertEqual(result["permitted"], 0.0)
-        self.assertEqual(result["total_actions"], 0.0)
+        self.assertEqual(result1["compliance_score"], 1.0)
+        self.assertEqual(result1["violations"], 0.0)
+        self.assertEqual(result1["permitted"], 0.0)
+        self.assertEqual(result1["total_actions"], 0.0)
+
+        result2 = self.evaluator.evaluate_query("admin", ["read_all"])
+        self.assertEqual(result2["compliance_score"], 1.0)
+        self.assertEqual(result2["violations"], 0.0)
+        self.assertEqual(result2["permitted"], 1.0) 
+        self.assertEqual(result2["total_actions"], 1.0)
+
 
     def test_evaluate_session(self):
         session = [["read_own"], ["delete"], ["read_own", "read_all"]]
@@ -50,7 +57,7 @@ class TestRBACSecurityEvaluator(unittest.TestCase):
         self.assertIsInstance(result["avg_compliance"], float)
         self.assertGreaterEqual(result["avg_compliance"], 0.0)
         self.assertLessEqual(result["avg_compliance"], 1.0)
-        self.assertGreaterEqual(result["total_violations"], 0)
+        self.assertGreaterEqual(result["total_violations"], 0.0)
 
 if __name__ == "__main__":
     unittest.main()

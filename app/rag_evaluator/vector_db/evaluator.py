@@ -11,6 +11,9 @@ class VectorDBEvaluator:
         """
         Measure average cosine similarity between query and docs.
         """
+        if doc_embeddings is None or len(doc_embeddings) == 0:
+            return 0.0
+    
         sims = cosine_similarity([query_embedding], doc_embeddings)[0]
         return float(np.mean(sims))
 
@@ -18,6 +21,10 @@ class VectorDBEvaluator:
         """
         Evaluate index performance based on retrieval times.
         """
+
+        if not retrieval_times:
+            return {"avg_retrieval_time": 0.0, "max_retrieval_time": 0.0, "min_retrieval_time": 0.0}
+
         return {
             "avg_retrieval_time": float(np.mean(retrieval_times)),
             "max_retrieval_time": float(np.max(retrieval_times)),

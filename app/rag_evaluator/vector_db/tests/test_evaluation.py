@@ -27,6 +27,8 @@ class TestVectorDBEvaluator(unittest.TestCase):
         result = self.evaluator.evaluate(self.query_embedding, self.doc_embeddings, self.retrieval_times)
         self.assertIn("embedding_quality", result)
         self.assertIn("avg_retrieval_time", result)
+        self.assertIn("max_retrieval_time", result)
+        self.assertIn("min_retrieval_time", result)
 
 if __name__ == "__main__":
     unittest.main()

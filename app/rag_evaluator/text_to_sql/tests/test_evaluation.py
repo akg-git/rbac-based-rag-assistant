@@ -11,6 +11,7 @@ class TestTextToSQLEvaluator(unittest.TestCase):
         result = self.evaluator.evaluate(sql)
         self.assertTrue(result["valid_syntax"])
         self.assertTrue(result["valid_schema"])
+        self.assertEqual(result["errors"], [])
 
     def test_invalid_sql(self):
         sql = "SELEC id name FROM users;"
@@ -21,6 +22,24 @@ class TestTextToSQLEvaluator(unittest.TestCase):
         sql = "SELECT id, password FROM users;"
         result = self.evaluator.evaluate(sql)
         self.assertTrue(result["valid_syntax"])
+        self.assertFalse(result["valid_schema"])
+
+    def test_invalid_column(self):
+        sql = "SELECT age FROM users"
+        result = self.evaluator.evaluate(sql)
+        self.assertTrue(result["valid_syntax"])
+        self.assertFalse(result["valid_schema"])
+
+    def test_non_sql_statement(self):
+        sql = "DROP DATABASE testdb"
+        result = self.evaluator.evaluate(sql)
+        self.assertFalse(result["valid_syntax"])
+        self.assertFalse(result["valid_schema"])
+
+    def test_empty_query(self):
+        sql = ""
+        result = self.evaluator.evaluate(sql)
+        self.assertFalse(result["valid_syntax"])
         self.assertFalse(result["valid_schema"])
 
 if __name__ == "__main__":

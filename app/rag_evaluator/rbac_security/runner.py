@@ -19,21 +19,24 @@ class RbacSecurityRunner:
         for folder in [self.raw_results_dir, self.summary_dir]:
             folder.mkdir(parents=True, exist_ok=True)
 
-        self.evaluator = RBACSecurityEvaluator()
+        self.role_permissions = {
+                    "admin": ["read_all", "write_all", "delete"],
+                    "user": ["read_own", "read_public"],
+                    "guest": ["read_public"]
+        }
+
+        self.evaluator = RBACSecurityEvaluator(self.role_permissions)
 
     def run(self, qa_dataset: List[Dict]) -> Tuple[pd.DataFrame, Dict[str, float]]:
         results = []
 
         for qa in qa_dataset:
-            query = qa["question"]
             role = qa["role"]
-            allowed_roles = qa.get("allowed_roles", [role])  # fallback
-            retrieved_answer = qa.get("generated_answer", qa["answer"])
+            query_action = qa.get("query_action", qa.get("query_actions", []))
 
-            scores = self.evaluator.evaluate_query(query, role, allowed_roles, retrieved_answer)
+            scores = self.evaluator.evaluate_query(role, query_action)
 
             result_row = {
-                "question": query,
                 "role": role,
                 "source": qa["source"],
                 "ground_truth": qa["answer"],
