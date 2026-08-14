@@ -1,8 +1,15 @@
-import json, pandas as pd, time
+import json
+import logging
+import pandas as pd
+import time
 from pathlib import Path
 from typing import List, Dict, Tuple
 
 from app.rag_evaluator.text_to_sql.evaluator import TextToSQLEvaluator
+from app.utils.sql_query import translate_nl_to_sql
+
+logger = logging.getLogger(__name__)
+
 
 class TextToSQLRunner:
     """
@@ -10,14 +17,23 @@ class TextToSQLRunner:
     Handles execution, persistence, and summary generation.
     """
 
-    def __init__(self, schema: Dict[str, List[str]], report_dir: Path = Path("app/rag_evaluator/reports")):
+    def __init__(self, report_dir: Path = Path("app/rag_evaluator/reports")):
         self.timestamp = time.strftime("%Y%m%d_%H%M%S")
-        self.report_dir = report_dir
-        self.raw_results_dir = report_dir / "raw_results"
-        self.summary_dir = report_dir / "summaries"
+        self.report_dir = Path(report_dir) if report_dir is not None else Path("app/rag_evaluator/reports")
+        self.raw_results_dir = self.report_dir / "raw_results"
+        self.summary_dir = self.report_dir / "summaries"
+        self.logs_dir = self.report_dir / "logs"
 
-        for folder in [self.raw_results_dir, self.summary_dir]:
+        for folder in [self.raw_results_dir, self.summary_dir, self.logs_dir]:
             folder.mkdir(parents=True, exist_ok=True)
+
+        schema = {
+            "users": ["id", "name", "email", "role_id"],
+            "roles": ["id", "role_name", "permissions"],
+            "documents": ["id", "title", "content", "created_at", "owner_role"],
+            "orders": ["id", "user_id", "amount", "status", "created_at"],
+            "audit_logs": ["id", "event_type", "role", "action", "timestamp", "status"]
+        }
 
         self.evaluator = TextToSQLEvaluator(schema)
 
@@ -31,12 +47,18 @@ class TextToSQLRunner:
         results = []
 
         for item in sql_dataset:
-            sql = item["query"]
+
+            sql = translate_nl_to_sql(item["question"], item["role"]) 
+
+            if sql is None:
+                logger.warning("Skipping text-to-SQL row without query/question key: %s", item)
+                continue
+
             scores = self.evaluator.evaluate(sql)
 
             result_row = {
                 "query": sql,
-                "source": item["source"],
+                "source": item.get("source","unknown"),
                 "valid_syntax": scores["valid_syntax"],
                 "valid_schema": scores["valid_schema"],
                 "errors": ";".join(scores["errors"]) if scores["errors"] else "",

@@ -26,11 +26,12 @@ class AuditMonitoringRunner:
         Args:
             events: list of dicts with keys:
                 - user: str
+                - role: str
                 - action: str
                 - status: str ("granted" or "denied")
         """
         for ev in events:
-            self.evaluator.log_event(ev["user"], ev["action"], ev["status"])
+            self.evaluator.log_event(ev["user"], ev["role"], ev["action"], ev["status"])
 
         logs = self.evaluator.get_logs()
         metrics = self.evaluator.evaluate()

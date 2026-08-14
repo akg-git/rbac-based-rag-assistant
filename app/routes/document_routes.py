@@ -1,12 +1,13 @@
 import os
 from pathlib import Path as PathlibPath
-from fastapi import APIRouter, File, Form, Path, UploadFile, HTTPException
+from fastapi import APIRouter, Depends, File, Form, UploadFile, HTTPException
 from fastapi.responses import JSONResponse
 import pandas as pd
 import logging
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 
+from app.authentication.auth import authenticate
 from app.schemas.duckdb import get_duckdb_conn
 from app.schemas.sqlitedb import get_sqlite_conn
 from app.utils.rag_module import index_unembedded_document
@@ -18,9 +19,26 @@ router = APIRouter()
 UPLOAD_DIR = "static/uploads/"
 
 @router.post("/upload-docs")
-async def upload_docs(file: UploadFile = File(...), role: str = Form(...)):
+async def upload_docs(
+    file: UploadFile = File(...),
+    role: str = Form(...),
+    user=Depends(authenticate),
+):
 
     try: 
+        if not user:
+            raise HTTPException(status_code=401, detail="Authentication required.")
+
+        # Check if the authenticated user has the "C-Level" role before uploading documents
+        if user["role"] != "C-Level":
+            raise HTTPException(status_code=403, detail="Only C-Level can upload documents.")
+
+        sqlite_conn = get_sqlite_conn()
+        sqlite_cur = sqlite_conn.cursor()
+        sqlite_cur.execute("SELECT 1 FROM roles WHERE role_name = ?", (role,))
+        if not sqlite_cur.fetchone():
+            raise HTTPException(status_code=400, detail="Invalid role specified.")
+
         # extract the file details
         filename = file.filename
         extension = filename.split(".")[-1].lower()
@@ -73,7 +91,7 @@ async def upload_docs(file: UploadFile = File(...), role: str = Form(...)):
 
                 # save metadata to DuckDB table tables_metadata
                 duck_conn.execute(
-                    "INSERT INTO tables_metadata (table_name, roles) VALUES (?, ?)",
+                    "INSERT INTO tables_metadata (table_name, role) VALUES (?, ?)",
                     (table_name, role)
                 )
                 logger.info(f"[UPLOAD] Added metadata for table: {table_name}, role: {role}")
@@ -83,6 +101,8 @@ async def upload_docs(file: UploadFile = File(...), role: str = Form(...)):
             except Exception as e:
                 logger.error(f"[UPLOAD] Error creating DuckDB table: {str(e)}")
                 raise HTTPException(status_code=500, detail=f"Error processing CSV: {str(e)}")
+            finally:
+                duck_conn.close()
 
         elif extension in ["txt", "md"]:
             content = data.decode("utf-8")

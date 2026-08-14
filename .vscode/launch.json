@@ -1,15 +1,17 @@
 {
     "version": "0.2.0",
     "configurations": [
+        
         {
-            "name": "Debug Current Test File",
+            "name": "Python: Debug Unit Teste",
             "type": "debugpy",
             "request": "launch",
             "module": "unittest",
             "args": ["${relativeFileDirname}.${fileBasenameNoExtension}"],
             "cwd": "${workspaceFolder}",
             "console": "integratedTerminal",
-            "justMyCode": true,
+            "stopOnEntry": true,
+            "justMyCode": false,
             "env": {
                 "PYTHONPATH": "${workspaceFolder}"
             }

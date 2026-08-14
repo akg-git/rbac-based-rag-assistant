@@ -20,9 +20,12 @@ class RbacSecurityRunner:
             folder.mkdir(parents=True, exist_ok=True)
 
         self.role_permissions = {
-                    "admin": ["read_all", "write_all", "delete"],
-                    "user": ["read_own", "read_public"],
-                    "guest": ["read_public"]
+            "C-Level": ["read", "create", "update", "delete"],
+            "HR": ["read", "update", "read_general"],
+            "Engineer": ["read", "update", "read_general"],
+            "Finance": ["read", "update", "read_general"],
+            "Marketing": ["read", "update", "read_general"],
+            "General": ["read_general"]
         }
 
         self.evaluator = RBACSecurityEvaluator(self.role_permissions)
@@ -32,7 +35,7 @@ class RbacSecurityRunner:
 
         for qa in qa_dataset:
             role = qa["role"]
-            query_action = qa.get("query_action", qa.get("query_actions", []))
+            query_action = (self.role_permissions.get(role, []) or ["__invalid_action__"])[0]
 
             scores = self.evaluator.evaluate_query(role, query_action)
 

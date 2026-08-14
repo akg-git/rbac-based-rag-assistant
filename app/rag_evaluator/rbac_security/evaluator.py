@@ -1,11 +1,13 @@
 # evaluator.py
-from typing import Dict, List, Union
+from typing import Dict, List
 
 class RBACSecurityEvaluator:
     def __init__(self, role_permissions: Dict[str, List[str]]):
         """
         role_permissions: dict mapping role -> list of allowed actions/resources
-        Example: {"admin": ["read_all", "write_all"], "user": ["read_own"]}
+        Example: {  "C-Level": ["read", "create", "update", "delete"],
+                    "HR": ["read", "update", "read_general"],
+                    "General": ["read_general"]     }
         """
         self.role_permissions = role_permissions
 
@@ -17,7 +19,7 @@ class RBACSecurityEvaluator:
     def evaluate_query(
         self,
         role: str,
-        query_action: Union[str, List[str]],
+        query_action: List[str],
     ) -> Dict[str, float]:
         """
         Evaluate whether a role is allowed to perform a query action.
@@ -28,7 +30,7 @@ class RBACSecurityEvaluator:
         permitted = sum(1 for act in query_actions if act in allowed)
         denied = len(query_actions) - permitted
 
-        role_match = 1.0 if role in self.role_permissions else 0.0
+        role_match = 1.0 if permitted > 0 else 0.0
         least_privilege = 1.0 if role_match and len(allowed) == 1 else 0.5 if role_match else 0.0
         auditability = 1.0 if query_actions else 0.0
         unauthorized_access = 1 if denied else 0

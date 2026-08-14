@@ -1,0 +1,37 @@
+[
+  {
+    "question": "List all user names",
+    "answer": "Alice, Bob, Charlie",
+    "role": "Engineer",
+    "source": "users",
+    "sql": "SELECT name FROM users;"
+  },
+  {
+    "question": "Show all orders with amount greater than 100",
+    "answer": "Order1, Order2",
+    "role": "Finance",
+    "source": "orders",
+    "sql": "SELECT id, amount FROM orders WHERE amount > 100;"
+  },
+  {
+    "question": "Retrieve general document titles",
+    "answer": "Doc1, Doc2",
+    "role": "General",
+    "source": "documents",
+    "sql": "SELECT title FROM documents;"
+  },
+  {
+    "question": "Get audit logs for failed actions",
+    "answer": "Log1, Log2",
+    "role": "HR",
+    "source": "audit_logs",
+    "sql": "SELECT id, event_type, role, action, status FROM audit_logs WHERE status = 'failed';"
+  },
+  {
+    "question": "List all roles and their permissions",
+    "answer": "C-Level: CRUD, HR: read/update/general, etc.",
+    "role": "C-Level",
+    "source": "roles",
+    "sql": "SELECT role_name, permissions FROM roles;"
+  }
+]

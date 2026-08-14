@@ -1,0 +1,7 @@
+{
+  "users": ["id", "name", "email", "role_id"],
+  "roles": ["id", "role_name", "permissions"],
+  "documents": ["id", "title", "content", "created_at", "owner_role"],
+  "orders": ["id", "user_id", "amount", "status", "created_at"],
+  "audit_logs": ["id", "event_type", "role", "action", "timestamp", "status"]
+}

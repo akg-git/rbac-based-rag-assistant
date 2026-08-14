@@ -17,7 +17,7 @@ try:
 except ImportError:  # pragma: no cover - exercised when optional deps are missing
     Groq = None
 
-import os, json, logging
+import os, json, logging, re
 from typing import Dict
 
 logger = logging.getLogger(__name__)
@@ -25,6 +25,20 @@ logger = logging.getLogger(__name__)
 # Define required metrics and their valid range
 REQUIRED_METRICS = {"Faithfulness", "Relevance", "Completeness", "Clarity"}
 VALID_SCORE_RANGE = (0.0, 1.0)
+
+
+def _safe_json_loads(raw_output: str):
+    """Best-effort JSON extraction for model responses wrapped in prose or fences."""
+    try:
+        return json.loads(raw_output)
+    except json.JSONDecodeError:
+        match = re.search(r"(\{.*\}|\[.*\])", raw_output, re.DOTALL)
+        if match:
+            try:
+                return json.loads(match.group(1))
+            except json.JSONDecodeError:
+                pass
+        return None
 
 class AnswerQualityEvaluator:
     def __init__(self, embedding_model="sentence-transformers/all-MiniLM-L6-v2"):
@@ -137,11 +151,9 @@ class AnswerQualityEvaluator:
 
             cleaned_output = cleaned_output.strip()
 
-            try:
-                scores = json.loads(cleaned_output)
-            except json.JSONDecodeError as e:
-                
-                logger.warning(f"JSON parsing failed: {e}. Raw output: {raw_output}")
+            scores = _safe_json_loads(cleaned_output)
+            if scores is None:
+                logger.warning("JSON parsing failed. Raw output: %s", raw_output)
                 scores = {metric: 0.5 for metric in REQUIRED_METRICS}
 
             if isinstance(scores, list) and scores and isinstance(scores[0], dict):

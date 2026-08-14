@@ -1,8 +1,11 @@
+import logging
+
 from app.utils.rag_module import vectorstore, model 
 
 from langchain_classic.chains import RetrievalQA
 # from langchain.schema import Document
 import pandas as pd
+import numpy as np
 import time, os, json
 from groq import Groq
 
@@ -13,6 +16,9 @@ from app.rag_evaluator.answer_quality.runner import AnswerQualityRunner
 from app.rag_evaluator.retrieval.runner import RetrievalRunner
 from app.rag_evaluator.rbac_security.runner import RbacSecurityRunner
 from app.rag_evaluator.latency.runner import LatencyRunner
+from app.rag_evaluator.vector_db.runner import VectorDBRunner
+from app.rag_evaluator.audit_monitoring.runner import AuditMonitoringRunner
+from app.rag_evaluator.text_to_sql.runner import TextToSQLRunner
 
 # ==========================================
 # Configuration
@@ -21,6 +27,20 @@ from app.rag_evaluator.latency.runner import LatencyRunner
 DATA_DIR = Path("resources/data")
 REPORT_DIR = Path("app/rag_evaluator/reports")
 REPORT_DIR.mkdir(parents=True, exist_ok=True)
+
+LOG_DIR = REPORT_DIR / Path("evaluation_logs")
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+timestamp = time.strftime("%Y%m%d_%H%M%S")
+log_file = LOG_DIR / f"evaluation_pipeline_{timestamp}.log"
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+    handlers=[
+        logging.FileHandler(LOG_DIR / "evaluation_pipeline.log", mode="a", encoding="utf-8")
+    ],
+    force=True,
+)
 
 MODEL_NAME = "llama-3.3-70b-versatile"
 
@@ -55,6 +75,9 @@ class EvaluationPipeline:
         self.retrieval_runner = RetrievalRunner(report_dir=REPORT_DIR)
         self.rbac_security_runner = RbacSecurityRunner(report_dir=REPORT_DIR)
         self.latency_runner = LatencyRunner(report_dir=REPORT_DIR)
+        self.vector_db_runner = VectorDBRunner(report_dir=REPORT_DIR)
+        self.audit_monitoring_runner = AuditMonitoringRunner(report_dir=REPORT_DIR)
+        self.text_to_sql_runner = TextToSQLRunner(report_dir=REPORT_DIR)
 
         self.groq_client = client
 
@@ -253,6 +276,33 @@ class EvaluationPipeline:
         print("Summary:", summary)
         return result_df, summary
 
+    # Vector DB Evaluation:
+    def run_vector_db(self, queries):
+        result_df, summary = self.vector_db_runner.run(queries)
+        print("Vector DB Evaluation completed.")
+        print("Summary:", summary)
+        return result_df, summary
+
+    def run_text_to_sql(self, qa_dataset):
+        result_df, summary = self.text_to_sql_runner.run(qa_dataset)
+        print("Text To SQL Evaluation completed.")
+        print("Summary:", summary)
+        return result_df, summary
+
+    def run_audit_monitoring(self):
+
+        sample_events = [
+            {"user": "alice", "role": "employee", "action": "read_data", "status": "granted"},
+            {"user": "bob", "role": "guest", "action": "delete_data", "status": "denied"},
+            {"user": "charlie", "role": "HR", "action": "update_record", "status": "granted"},
+            {"user": "dave", "role": "employee", "action": "write_data", "status": "denied"},
+        ]
+
+        result_df, summary = self.audit_monitoring_runner.run(sample_events)
+        print("Audit Monitoring Evaluation completed.")
+        print("Summary:", summary)
+        return result_df, summary
+
     # ----------------------------------------------------
     # Final Report Trigger
     # ----------------------------------------------------
@@ -286,6 +336,24 @@ class EvaluationPipeline:
             ("dummy_function", lambda x: x*2, [5], {}),
         ])
         print("Latency Evaluation completed successfully.")
+
+        print("Running Vector DB Evaluation...")
+        self.run_vector_db([
+            {
+                "query": "What is AI?",
+                "query_embedding": np.array([0.1, 0.2, 0.3]),
+                "doc_embeddings": np.array([[0.1,0.2,0.3],[0.2,0.1,0.0],[0.3,0.3,0.3]]),
+                "retrieval_times": [0.01, 0.02, 0.03]
+            }
+        ])
+
+        print("Running Text To SQL Evaluation...")
+        self.run_text_to_sql(qa_dataset)
+        print("Text To SQL Evaluation completed successfully.")
+
+        print("Running Audit Monitoring Evaluation...")
+        self.run_audit_monitoring()
+        print("Audit Monitoring Evaluation completed successfully.")
 
 # ==========================================
 # Entry Point

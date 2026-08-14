@@ -4,60 +4,84 @@ from app.rag_evaluator.rbac_security.evaluator import RBACSecurityEvaluator
 class TestRBACSecurityEvaluator(unittest.TestCase):
     def setUp(self):
         self.role_permissions = {
-            "admin": ["read_all", "write_all", "delete"],
-            "user": ["read_own", "read_public"],
-            "guest": ["read_public"]
+            "C-Level": ["read", "create", "update", "delete"],
+            "HR": ["read", "update", "read_general"],
+            "Engineer": ["read", "update", "read_general"],
+            "Finance": ["read", "update", "read_general"],
+            "Marketing": ["read", "update", "read_general"],
+            "General": ["read_general"]
         }
         self.evaluator = RBACSecurityEvaluator(self.role_permissions)
 
-    def test_check_access(self):
-        self.assertTrue(self.evaluator.check_access("admin", "read_all"))
-        self.assertFalse(self.evaluator.check_access("user", "delete"))
+    # --- C-Level (Admin) ---
+    def test_c_level_full_access(self):
+        for action in ["read", "create", "update", "delete"]:
+            result = self.evaluator.evaluate_query("C-Level", action)
+            self.assertEqual(result["role_match"], 1.0)
 
-    def test_compliance_full_access(self):
-        result = self.evaluator.evaluate_query("admin", ["read_all"])
-        self.assertEqual(result["compliance_score"], 1.0)
-        self.assertEqual(result["violations"], 0.0)
-        self.assertEqual(result["permitted"], 1.0)
-        self.assertEqual(result["total_actions"], 1.0)
+    # --- HR Role ---
+    def test_hr_allowed_actions(self):
+        for action in ["read", "update", "read_general"]:
+            result = self.evaluator.evaluate_query("HR", action)
+            self.assertEqual(result["role_match"], 1.0)
 
-    def test_compliance_partial_access(self):
-        result = self.evaluator.evaluate_query("user", ["read_own", "write_all"])
-        # user can only do "read_own"
-        self.assertEqual(result["compliance_score"], 0.5)
-        self.assertEqual(result["violations"], 1.0)
-        self.assertEqual(result["permitted"], 1.0)
-        self.assertEqual(result["total_actions"], 2.0)
+    def test_hr_denied_create_delete(self):
+        for action in ["create", "delete"]:
+            result = self.evaluator.evaluate_query("HR", action)
+            self.assertEqual(result["unauthorized_access"], 1.0)
 
-    def test_compliance_no_access(self):
-        result = self.evaluator.evaluate_query("user", ["write_all"])
-        self.assertEqual(result["compliance_score"], 0.0)
-        self.assertEqual(result["violations"], 1.0)
-        self.assertEqual(result["permitted"], 0.0)
-        self.assertEqual(result["total_actions"], 1.0)
+    # --- Engineer Role ---
+    def test_engineer_allowed_actions(self):
+        for action in ["read", "update", "read_general"]:
+            result = self.evaluator.evaluate_query("Engineer", action)
+            self.assertEqual(result["role_match"], 1.0)
 
-    def test_empty_query_actions(self):
-        result1 = self.evaluator.evaluate_query("admin", [])
-        # No actions requested → compliance_score defaults to 1.0
-        self.assertEqual(result1["compliance_score"], 1.0)
-        self.assertEqual(result1["violations"], 0.0)
-        self.assertEqual(result1["permitted"], 0.0)
-        self.assertEqual(result1["total_actions"], 0.0)
+    def test_engineer_denied_create_delete(self):
+        for action in ["create", "delete"]:
+            result = self.evaluator.evaluate_query("Engineer", action)
+            self.assertEqual(result["unauthorized_access"], 1.0)
 
-        result2 = self.evaluator.evaluate_query("admin", ["read_all"])
-        self.assertEqual(result2["compliance_score"], 1.0)
-        self.assertEqual(result2["violations"], 0.0)
-        self.assertEqual(result2["permitted"], 1.0) 
-        self.assertEqual(result2["total_actions"], 1.0)
+    # --- Finance Role ---
+    def test_finance_allowed_actions(self):
+        for action in ["read", "update", "read_general"]:
+            result = self.evaluator.evaluate_query("Finance", action)
+            self.assertEqual(result["role_match"], 1.0)
 
+    def test_finance_denied_create_delete(self):
+        for action in ["create", "delete"]:
+            result = self.evaluator.evaluate_query("Finance", action)
+            self.assertEqual(result["unauthorized_access"], 1.0)
 
-    def test_evaluate_session(self):
-        session = [["read_own"], ["delete"], ["read_own", "read_all"]]
-        result = self.evaluator.evaluate_session("user", session)
-        self.assertIsInstance(result["avg_compliance"], float)
-        self.assertGreaterEqual(result["avg_compliance"], 0.0)
-        self.assertLessEqual(result["avg_compliance"], 1.0)
-        self.assertGreaterEqual(result["total_violations"], 0.0)
+    # --- Marketing Role ---
+    def test_marketing_allowed_actions(self):
+        for action in ["read", "update", "read_general"]:
+            result = self.evaluator.evaluate_query("Marketing", action)
+            self.assertEqual(result["role_match"], 1.0)
 
+    def test_marketing_denied_create_delete(self):
+        for action in ["create", "delete"]:
+            result = self.evaluator.evaluate_query("Marketing", action)
+            self.assertEqual(result["unauthorized_access"], 1.0)
+
+    # --- General Role ---
+    def test_general_allowed_read_general(self):
+        result = self.evaluator.evaluate_query("General", "read_general")
+        self.assertEqual(result["role_match"], 1.0)
+
+    def test_general_denied_other_actions(self):
+        for action in ["read", "update", "create", "delete"]:
+            result = self.evaluator.evaluate_query("General", action)
+            self.assertEqual(result["unauthorized_access"], 1.0)
+
+    # --- Edge Cases ---
+    def test_unknown_role(self):
+        result = self.evaluator.evaluate_query("Unknown", "read")
+        self.assertEqual(result["role_match"], 0.0)
+
+    def test_invalid_action(self):
+        result = self.evaluator.evaluate_query("HR", "invalid_action")
+        self.assertEqual(result["role_match"], 0.0)
+        self.assertEqual(result["unauthorized_access"], 1.0)
+        
 if __name__ == "__main__":
     unittest.main()

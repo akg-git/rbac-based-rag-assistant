@@ -1,209 +1,257 @@
+import logging
 import os
+
+import sqlparse
 import tabulate
-from app.schemas.duckdb import get_duckdb_conn
-from app.schemas.sqlitedb import get_sqlite_conn
 from groq import Groq
-from pathlib import Path
-import re
+from sqlparse.sql import Function, Identifier, IdentifierList, Parenthesis
+from sqlparse.tokens import DML, Keyword, Newline, Whitespace
 
-BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-DB_PATH = os.path.join(BASE_DIR,"app","schemas", "roles_docs.db")
+from app.schemas.duckdb import get_duckdb_conn, get_duckdb_schema
 
-#duckdb connection
-duck_conn = get_duckdb_conn()
 
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+logger = logging.getLogger(__name__)
 
 
-def get_allowed_tables_for_role(role:str) -> list[str]:
-
-    role = role.lower()
-
-    if role == "c-level":
-        query = "SELECT table_name FROM tables_metadata"
-        return [ row[0] for row in duck_conn.execute(query).fetchall()]
-    
-    elif role == "general":
-        query = "SELECT table_name FROM tables_metadata WHERE role = 'general'"
-        return [ row[0] for row in duck_conn.execute(query).fetchall()]
-    
-    elif role == "hr":
-        query = "SELECT table_name FROM tables_metadata WHERE role = 'hr'"
-        return [ row[0] for row in duck_conn.execute(query).fetchall()]
-    
-    elif role == "engineer":
-        query = "SELECT table_name FROM tables_metadata WHERE role = 'engineer'"
-        return [ row[0] for row in duck_conn.execute(query).fetchall()]
-    
-    elif role == "finance":
-        query = "SELECT table_name FROM tables_metadata WHERE role = 'finance'"
-        return [ row[0] for row in duck_conn.execute(query).fetchall()]
-    
-    elif role == "marketing":
-        query = "SELECT table_name FROM tables_metadata WHERE role = 'marketing'"
-        return [ row[0] for row in duck_conn.execute(query).fetchall()]
-    
-    else:
-        query = """
-        SELECT table_name FROM tables_metadata
-        WHERE role = ? OR role = 'general'
-        """
-        return [row[0] for row in duck_conn.execute(query, [role]).fetchall()]
-
-def translate_nl_to_sql(question: str, allowed_tables: list[str]) -> str:
-
-    sqlconn = get_sqlite_conn()
-    sqlcur = sqlconn.cursor()
-
-    # fetch headers from table
-    sqlcur.execute(""" 
-        SELECT filename, headers_Str FROM documents
-        WHERE embedded = 1 AND headers_str IS NOT NULL
-    """)
-    rows = sqlcur.fetchall()
-
-    print("Raw rows from DB:", rows)
-
-    # creating schema from headers
-    schemas =[]
-    for filename, headers_Str in rows:
-
-        try:
-            table_name = Path(filename).stem.replace("-","_")
-            print(table_name)
-
-            cols = ",".join(headers_Str.split(","))
-            print(cols)
-
-            schemas.append(f"Table Name: {table_name}\nColumns: {cols}")
-
-        except Exception as e:
-            print(f"❌ Error while building schema for {filename}: {e}")
-
-    print("Schemas: ",schemas)
-    schema_block = "\n\n".join(schemas)
-    print("Schema Block: ", schema_block)
+def get_allowed_tables_for_role(role: str) -> list[str]:
+    """Return physical tables authorized for a role."""
+    normalized_role = role.casefold()
+    conn = get_duckdb_conn(read_only=True)
+    try:
+        if normalized_role == "c-level":
+            query = """
+                SELECT table_name
+                FROM tables_metadata
+                WHERE table_name <> 'tables_metadata'
+            """
+            params = []
+        else:
+            query = """
+                SELECT table_name
+                FROM tables_metadata
+                WHERE table_name <> 'tables_metadata'
+                  AND (lower(role) = ? OR lower(role) = 'general')
+            """
+            params = [normalized_role]
+        return [row[0] for row in conn.execute(query, params).fetchall()]
+    finally:
+        conn.close()
 
 
-    # Prompts for LLM
-    prompt = f"""
-        You are an expert SQLite query generation assistant.
+def translate_nl_to_sql(question: str, allowed_tables: list[str], conn=None) -> str:
+    """Generate DuckDB SQL using only catalog metadata for allowed tables."""
+    owns_connection = conn is None
+    conn = conn or get_duckdb_conn(read_only=True)
+    try:
+        schema = get_duckdb_schema(conn, allowed_tables)
+        schema_block = "\n\n".join(
+            f"Table Name: {table_name}\nColumns: {', '.join(columns)}"
+            for table_name, columns in schema.items()
+        )
+        prompt = f"""
+        You are an expert DuckDB query generation assistant.
 
-        Your task is to convert natural language questions into SAFE and VALID SQLite SELECT queries only.
+        Convert the natural language question into one safe DuckDB SELECT query.
 
         Database Schema:
         {schema_block}
 
-        Rules and Constraints:
-
-        1. Generate ONLY a valid SQLite SELECT query [NEVER generate INSERT/UPDATE/DELETE/DROP/ALTER/CREATE]
-        3. Use ONLY the tables and columns provided in the schema.
-        4. Use exact table names and column names exactly as defined.
-        5. Do NOT hallucinate columns or tables.
-        6. If a requested field does not exist, infer the closest valid column name from the schema. 
-           [example: if requested for 'employee name', consider closest alternatives like 'full-name', 'last-name'.
-            if asked about 'position', consider 'title, 'role' or 'designation' if they exists]
-        7. If multiple similar columns exist, choose the most semantically relevant one.
-        8. If the question is ambiguous, generate the safest minimal query.
-        9. Limit results to 100 rows unless user explicitly asks for more.
-        10. Never mix aggregate functions with non-grouped columns improperly.
-        11. Use aliases where readability improves clarity.
-        12. Return ONLY raw SQL query text. Do NOT include - markdown/code fences, explanations, or comments.
-        13. If query generation is impossible from provided schema, return exactly: INVALID_QUERY
+        Rules:
+        1. Generate one SELECT query only.
+        2. Use only the tables and columns in the schema.
+        3. Never generate INSERT, UPDATE, DELETE, DROP, ALTER, CREATE, COPY,
+           PRAGMA, ATTACH, INSTALL, LOAD, table functions, or subqueries.
+        4. Return only raw SQL without markdown, explanations, or comments.
+        5. Return exactly INVALID_QUERY if generation is impossible.
 
         Natural Language Question: {question}
 
         SQL:
-    """
-
-    try:
+        """
         response = client.chat.completions.create(
             model="gpt-oss-20b",
             messages=[{"role": "user", "content": prompt}],
-            temperature=0
+            temperature=0,
         )
-        print("LLM call successful.")
-
-        response_txt = response.choices[0].message.content.strip()
-        print("Raw SQL generated:", response_txt)
-
-        return response_txt
-
-    except Exception as e:
-        print(f"❌ Error during LLM query generation: {e}")
+        return response.choices[0].message.content.strip()
+    except Exception as exc:
+        logger.error("SQL generation failed: %s", type(exc).__name__)
         return "INVALID_QUERY"
+    finally:
+        if owns_connection:
+            conn.close()
 
-FORBIDDEN = ["insert", "update", "delete", "drop", "alter", "create"]
-def is_safe_query(sql:str) -> bool:
-    sql_lower = sql.strip().lower().rstrip(";")
-    return sql_lower.startswith("select") and all(word not in sql_lower for word in FORBIDDEN)
 
-## Extract tables used in FROM and JOIN clauses
-def extract_tables_from_sql(sql: str) -> list[str]:
-    return re.findall(r'FROM\s+(\w+)|JOIN\s+(\w+)', sql, flags=re.IGNORECASE)
+def _meaningful_tokens(statement):
+    return [
+        token
+        for token in statement.tokens
+        if token.ttype not in (Whitespace, Newline)
+    ]
 
-# Flatten the list of tuples returned by regex to get a simple list of table names
-def flatten_matches(matches: list[tuple]) -> list[str]:
-    return [ item for tup in matches for item in tup if item]
 
-# This function will contain the logic to parse the question, generate SQL query based on user role and execute it against the database.
-def handle_sql_query(question:str, role:str, username:str, return_sql:bool=False) -> dict:
-    
+def _extract_table_names(statement) -> list[str]:
+    """Extract direct table identifiers from FROM and JOIN clauses."""
+    tables = []
+    tokens = _meaningful_tokens(statement)
+    for index, token in enumerate(tokens):
+        if token.ttype is not Keyword or token.normalized not in {"FROM", "JOIN"}:
+            continue
+        if index + 1 >= len(tokens):
+            raise ValueError("SQL table source is missing.")
+
+        source = tokens[index + 1]
+        if isinstance(source, (Function, Parenthesis)):
+            raise ValueError("SQL table functions and subqueries are not allowed.")
+
+        identifiers = (
+            source.get_identifiers()
+            if isinstance(source, IdentifierList)
+            else [source]
+        )
+        for identifier in identifiers:
+            if not isinstance(identifier, Identifier) or not identifier.get_real_name():
+                raise ValueError("Only direct table identifiers are allowed.")
+            tables.append(identifier.get_real_name())
+
+    if not tables:
+        raise ValueError("SQL query must reference a table.")
+    return tables
+
+
+def validate_sql_query(sql: str, allowed_tables: list[str], conn=None) -> tuple[bool, list[str], str]:
+    """Validate one SELECT and bind table/column names through DuckDB."""
+    statements = sqlparse.parse(sql)
+    if len(statements) != 1:
+        return False, [], "Exactly one SQL statement is required."
+
+    statement = statements[0]
+    tokens = _meaningful_tokens(statement)
+    if not tokens or tokens[0].ttype is not DML or tokens[0].normalized != "SELECT":
+        return False, [], "Only SELECT statements are allowed."
+
+    unsupported = {
+        "WITH", "UNION", "INTERSECT", "EXCEPT", "COPY", "PRAGMA",
+        "ATTACH", "INSTALL", "LOAD",
+    }
+    if any(
+        token.normalized in unsupported
+        for token in tokens
+        if token.ttype in (Keyword, DML)
+    ):
+        return False, [], "This SQL construct is not allowed."
+
     try:
+        referenced_tables = _extract_table_names(statement)
+    except ValueError as exc:
+        return False, [], str(exc)
+
+    allowed = {str(table).casefold() for table in allowed_tables}
+    if any(table.casefold() not in allowed for table in referenced_tables):
+        return False, referenced_tables, "Query references a table outside the user's permissions."
+
+    owns_connection = conn is None
+    conn = conn or get_duckdb_conn(read_only=True)
+    try:
+        conn.execute(f"EXPLAIN {sql}")
+    except Exception:
+        return False, referenced_tables, "Query references an unknown table or column."
+    finally:
+        if owns_connection:
+            conn.close()
+
+    return True, referenced_tables, ""
+
+
+def is_safe_query(sql: str) -> bool:
+    """Compatibility helper using parser-based validation."""
+    try:
+        statement = sqlparse.parse(sql)[0]
+        tables = _extract_table_names(statement)
+        valid, _, _ = validate_sql_query(sql, tables)
+        return valid
+    except (IndexError, ValueError, sqlparse.exceptions.SQLParseError):
+        return False
+
+
+def handle_sql_query(question: str, role: str, username: str, return_sql: bool = False) -> dict:
+    """Generate, authorize, validate, and execute one SQL query."""
+    conn = get_duckdb_conn()
+    try:
+        logger.info("[SQL] User=%s, Role=%s, Event=query_started", username, role)
         allowed_tables = get_allowed_tables_for_role(role)
-        
-        # Validate tables exist for role
         if not allowed_tables:
+            logger.warning(
+                "[SQL] User=%s, Role=%s, Event=query_denied, Reason=no_allowed_tables",
+                username,
+                role,
+            )
             return {
                 "answer": f"No data access available for role '{role}'. Please contact administrator.",
-                "error": True
+                "error": True,
+                "error_type": "authorization",
             }
-        
-        sql = translate_nl_to_sql(question, allowed_tables)
-        print("Generated SQL:", sql)
-        
-        # Check for invalid query
+
+        sql = translate_nl_to_sql(question, allowed_tables, conn)
         if sql.strip() == "INVALID_QUERY":
             return {
-                "answer": "Unable to generate a valid SQL query for your question. Please rephrase your question with more specific terms.",
-                "error": True
+                "answer": "Unable to generate a valid SQL query for your question.",
+                "error": True,
             }
 
-        if not is_safe_query(sql):
+        valid, referenced_tables, validation_error = validate_sql_query(
+            sql,
+            allowed_tables,
+            conn,
+        )
+        if not valid:
+            logger.warning(
+                "[SQL] User=%s, Role=%s, Event=query_denied, Reason=sql_validation_failed",
+                username,
+                role,
+            )
+            error_type = (
+                "authorization"
+                if any(
+                    table.casefold() not in {allowed.casefold() for allowed in allowed_tables}
+                    for table in referenced_tables
+                )
+                else "validation"
+            )
             return {
-                "answer": "Only SELECT queries are allowed.", 
-                "error": True
+                "answer": validation_error,
+                "error": True,
+                "error_type": error_type,
             }
 
-        raw_matches = extract_tables_from_sql(sql)
-        referenced_tables = flatten_matches(raw_matches) 
-
-        for table in referenced_tables:
-            if table not in allowed_tables:
-                return {
-                    "answer": f"Access to table '{table}' is not allowed for your role.", 
-                    "error": True
-                }
-        
-        result = duck_conn.execute(sql).fetchall()
-        columns = [desc[0] for desc in duck_conn.description]
-        output = [ list(row) for row in result]
-
-        markdown_table = tabulate.tabulate(output, headers=columns, tablefmt="github")
+        result = conn.execute(sql).fetchall()
+        columns = [description[0] for description in conn.description]
+        output = [list(row) for row in result]
         response = {
-            "answer": markdown_table if output else "Query executed successfully but returned no results.",
-            "error": False
+            "answer": tabulate.tabulate(output, headers=columns, tablefmt="github")
+            if output
+            else "Query executed successfully but returned no results.",
+            "error": False,
         }
-
         if return_sql:
             response["sql"] = sql
 
+        logger.info(
+            "[SQL] User=%s, Role=%s, Event=query_succeeded, Tables=%s",
+            username,
+            role,
+            referenced_tables,
+        )
         return response
-    
-    except Exception as e:
-        error_msg = str(e)
-        print(f"❌ SQL Query Error: {error_msg}")
-        return {
-            "answer": f"Error executing query: {error_msg[:100]}", 
-            "error": True
-        }
+    except Exception as exc:
+        logger.error(
+            "[SQL] User=%s, Role=%s, Event=query_failed, ErrorType=%s",
+            username,
+            role,
+            type(exc).__name__,
+            exc_info=True,
+        )
+        return {"answer": "Error executing query.", "error": True, "error_type": "execution"}
+    finally:
+        conn.close()

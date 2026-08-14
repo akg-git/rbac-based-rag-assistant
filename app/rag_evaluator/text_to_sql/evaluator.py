@@ -23,8 +23,8 @@ class TextToSQLEvaluator:
                 break
             if isinstance(token, IdentifierList):
                 for identifier in token.get_identifiers():
-                    if identifier.get_name():
-                        columns.append(identifier.get_name().lower())
+                    if str(identifier):
+                        columns.append(str(identifier).lower())
             elif isinstance(token, Identifier):
                 if token.get_name():
                     columns.append(token.get_name().lower())

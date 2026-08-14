@@ -44,6 +44,11 @@ async def chat_endpoint(request: ChatRequest, user = Depends(authenticate)):
                 
                 # Check if SQL execution failed
                 if result.get("error"):
+                    if result.get("error_type") == "authorization":
+                        raise HTTPException(
+                            status_code=403,
+                            detail="You are not authorized to access the requested data.",
+                        )
                     logger.warning(f"[CHAT] SQL query failed: {result.get('answer')}")
                     raise ValueError(result.get("answer", "SQL query execution failed"))
                 
@@ -55,6 +60,8 @@ async def chat_endpoint(request: ChatRequest, user = Depends(authenticate)):
                 sql_query = result.get("sql")
                 logger.info(f"[CHAT] SQL mode succeeded")
                 
+            except HTTPException:
+                raise
             except Exception as e:
                 logger.warning(f"[CHAT] SQL fallback triggered: {str(e)}")
                 # Fallback to RAG

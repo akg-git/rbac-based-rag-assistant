@@ -12,7 +12,7 @@ logging.basicConfig(
 # import DB connections from central module (initialises on import)
 from app.schemas.duckdb import (
     init_duckdb,
-    get_duckdb_conn
+    close_duckdb
 )
 
 from app.schemas.sqlitedb import (
@@ -44,5 +44,5 @@ app.include_router(chat_router, tags=["Chat"])
 async def shutdown_event():
     """Close database connections on app shutdown"""
     get_sqlite_conn().close()
-    get_duckdb_conn().close()
-    print("✅ SQLite and DuckDB connections closed")
+    close_duckdb()
+    print("✅ SQLite connection closed")
