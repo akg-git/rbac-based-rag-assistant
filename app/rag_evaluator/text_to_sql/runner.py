@@ -7,6 +7,7 @@ from typing import List, Dict, Tuple
 
 from app.rag_evaluator.text_to_sql.evaluator import TextToSQLEvaluator
 from app.utils.sql_query import translate_nl_to_sql
+from app.utils.sql_query import get_allowed_tables_for_role
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +49,8 @@ class TextToSQLRunner:
 
         for item in sql_dataset:
 
-            sql = translate_nl_to_sql(item["question"], item["role"]) 
+            allowed_tables = get_allowed_tables_for_role(item["role"])
+            sql = translate_nl_to_sql(item["question"], allowed_tables) 
 
             if sql is None:
                 logger.warning("Skipping text-to-SQL row without query/question key: %s", item)

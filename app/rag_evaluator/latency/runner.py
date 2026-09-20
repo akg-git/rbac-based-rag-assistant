@@ -21,32 +21,46 @@ class LatencyRunner:
 
         self.evaluator = LatencyEvaluator()
 
-    def run(self, functions_to_test: List[Tuple[str, Callable, List, Dict]]) -> Tuple[pd.DataFrame, Dict[str, float]]:
+    def run(self, functions_to_test: List[Tuple[str, Callable, List, Dict]], iterations: int = 5) -> Tuple[pd.DataFrame, Dict[str, float]]:
         """
         Args:
             functions_to_test: list of tuples (name, func, args, kwargs)
         """
         results = []
+        all_measured_times: List[float] = []
 
-        for name, func, args, kwargs in functions_to_test:
-            scores = self.evaluator.measure_latency(func, *args, **kwargs)
+        for item in functions_to_test:
+            # Support (name, func, args, kwargs) or (name, func)
+            name = item[0]
+            func = item[1]
+            args = item[2] if len(item) > 2 else []
+            kwargs = item[3] if len(item) > 3 else {}
+
+            sample_times = []
+            for _ in range(iterations):
+                start = time.perf_counter()
+                func(*args, **kwargs)
+                end = time.perf_counter()
+                sample_times.append(end - start)
+
+            all_measured_times.extend(sample_times)
+            metrics = self.evaluator.evaluate(sample_times)
+
             result_row = {
                 "function": name,
-                "latency_seconds": scores["latency_seconds"],
-                "throughput_ops_per_sec": scores["throughput_ops_per_sec"],
-                "result": scores["result"]
+                "iterations": iterations,
+                **metrics,
             }
             results.append(result_row)
+
 
         result_df = pd.DataFrame(results)
         result_file = self.raw_results_dir / f"latency_results_{self.timestamp}.csv"
         result_df.to_csv(result_file, index=False)
 
-        summary = {
-            "samples": len(result_df),
-            "avg_latency": round(result_df["latency_seconds"].mean(), 6),
-            "avg_throughput": round(result_df["throughput_ops_per_sec"].mean(), 6),
-        }
+        # Global summary across all tested functions
+        summary = self.evaluator.evaluate(all_measured_times)
+        summary["total_benchmarks"] = len(result_df)
 
         summary_file = self.summary_dir / f"latency_summary_{self.timestamp}.json"
         with open(summary_file, "w") as f:

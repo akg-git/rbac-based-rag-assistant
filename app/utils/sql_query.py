@@ -9,6 +9,8 @@ from sqlparse.tokens import DML, Keyword, Newline, Whitespace
 
 from app.schemas.duckdb import get_duckdb_conn, get_duckdb_schema
 
+from dotenv import load_dotenv
+load_dotenv()
 
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 logger = logging.getLogger(__name__)

@@ -1,16 +1,19 @@
 import logging
-
-from app.utils.rag_module import vectorstore, model 
-
-from langchain_classic.chains import RetrievalQA
-# from langchain.schema import Document
-import pandas as pd
-import numpy as np
-import time, os, json
-from groq import Groq
-
+import os
+import json
+import time
+import shutil
+import zipfile
+import subprocess
 from pathlib import Path
 from datetime import datetime
+
+import pandas as pd
+import numpy as np
+from groq import Groq
+
+from app.utils.rag_module import vectorstore, model 
+from langchain_classic.chains import RetrievalQA
 
 from app.rag_evaluator.answer_quality.runner import AnswerQualityRunner
 from app.rag_evaluator.retrieval.runner import RetrievalRunner
@@ -19,6 +22,7 @@ from app.rag_evaluator.latency.runner import LatencyRunner
 from app.rag_evaluator.vector_db.runner import VectorDBRunner
 from app.rag_evaluator.audit_monitoring.runner import AuditMonitoringRunner
 from app.rag_evaluator.text_to_sql.runner import TextToSQLRunner
+from app.rag_evaluator.reports.evaluation_report import EvaluationReport
 
 # ==========================================
 # Configuration
@@ -30,14 +34,63 @@ REPORT_DIR.mkdir(parents=True, exist_ok=True)
 
 LOG_DIR = REPORT_DIR / Path("evaluation_logs")
 LOG_DIR.mkdir(parents=True, exist_ok=True)
-timestamp = time.strftime("%Y%m%d_%H%M%S")
-log_file = LOG_DIR / f"evaluation_pipeline_{timestamp}.log"
 
+
+def archive_previous_logs(log_dir: Path) -> None:
+    """
+    Compress prior pipeline logs into 7z (or zip fallback) and store in log_dir / 'archives'.
+    """
+    archives_dir = log_dir / "archives"
+    archives_dir.mkdir(parents=True, exist_ok=True)
+
+    seven_zip_exe = "C:\\Program Files\\7-Zip\\7z.exe"
+    has_7z = bool(shutil.which("7z") or os.path.exists(seven_zip_exe))
+    seven_zip_cmd = shutil.which("7z") or seven_zip_exe
+
+    for log_file in log_dir.glob("*.log"):
+        if log_file.exists() and log_file.stat().st_size > 0:
+            mtime = datetime.fromtimestamp(log_file.stat().st_mtime).strftime("%Y%m%d_%H%M%S")
+            archived = False
+
+            if has_7z:
+                archive_7z = archives_dir / f"{log_file.stem}_{mtime}.7z"
+                try:
+                    subprocess.run(
+                        [seven_zip_cmd, "a", "-t7z", "-y", str(archive_7z), str(log_file)],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        check=True,
+                    )
+                    archived = True
+                except Exception:
+                    archived = False
+
+            if not archived:
+                archive_zip = archives_dir / f"{log_file.stem}_{mtime}.zip"
+                try:
+                    with zipfile.ZipFile(archive_zip, "w", zipfile.ZIP_DEFLATED) as zf:
+                        zf.write(log_file, arcname=log_file.name)
+                    archived = True
+                except Exception:
+                    pass
+
+            if archived:
+                try:
+                    with open(log_file, "w", encoding="utf-8") as f:
+                        f.truncate(0)
+                except Exception:
+                    pass
+
+
+# Archive previous run logs before initializing logger
+archive_previous_logs(LOG_DIR)
+
+pipeline_log_path = LOG_DIR / "evaluation_pipelines.log"
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
     handlers=[
-        logging.FileHandler(LOG_DIR / "evaluation_pipeline.log", mode="a", encoding="utf-8")
+        logging.FileHandler(pipeline_log_path, mode="a", encoding="utf-8")
     ],
     force=True,
 )
@@ -80,6 +133,12 @@ class EvaluationPipeline:
         self.text_to_sql_runner = TextToSQLRunner(report_dir=REPORT_DIR)
 
         self.groq_client = client
+
+        self.evaluation_report = EvaluationReport(
+            report_dir=REPORT_DIR,
+            client=self.groq_client,
+            model_name=MODEL_NAME,
+        )
 
     # ==========================================
     # Load Documents
@@ -254,8 +313,8 @@ class EvaluationPipeline:
         return result_df, summary
     
 
-    # Run Answer Quality Evaluation
-    def run_retrieval(self, qa_dataset):
+    # Run Retrieval  Evaluation
+    def run_retrieval_evaluation(self, qa_dataset):
         result_df, summary = self.retrieval_runner.run(qa_dataset)
         print("Retrieval Evaluation completed.")
         print("Summary:", summary)
@@ -263,33 +322,33 @@ class EvaluationPipeline:
         return result_df, summary
 
     # Run RBAC Security Evaluation
-    def run_rbac_security(self, qa_dataset):
+    def run_rbac_security_evaluation(self, qa_dataset):
         result_df, summary = self.rbac_security_runner.run(qa_dataset)
         print("RBAC Security Evaluation completed.")
         print("Summary:", summary)
         return result_df, summary
 
     # Run Latency Evaluation
-    def run_latency(self, functions_to_test):
+    def run_latency_evaluation(self, functions_to_test):
         result_df, summary = self.latency_runner.run(functions_to_test)
         print("Latency Evaluation completed.")
         print("Summary:", summary)
         return result_df, summary
 
     # Vector DB Evaluation:
-    def run_vector_db(self, queries):
+    def run_vector_db_evaluation(self, queries):
         result_df, summary = self.vector_db_runner.run(queries)
         print("Vector DB Evaluation completed.")
         print("Summary:", summary)
         return result_df, summary
 
-    def run_text_to_sql(self, qa_dataset):
+    def run_text_to_sql_evaluation(self, qa_dataset):
         result_df, summary = self.text_to_sql_runner.run(qa_dataset)
         print("Text To SQL Evaluation completed.")
         print("Summary:", summary)
         return result_df, summary
 
-    def run_audit_monitoring(self):
+    def run_audit_monitoring_evaluation(self):
 
         sample_events = [
             {"user": "alice", "role": "employee", "action": "read_data", "status": "granted"},
@@ -307,53 +366,89 @@ class EvaluationPipeline:
     # Final Report Trigger
     # ----------------------------------------------------
 
-    def generate_final_report(self):
-        print("Future implementation: reports/evaluation_report.py")
+    def generate_final_report(self, summaries=None):
+        """
+        Trigger executive report generation from aggregated summaries.
+        """
+        logging.info("Triggering final executive report generation...")
+        report_result = self.evaluation_report.generate_final_report(summaries)
+        print("\n" + "=" * 65)
+        print("FINAL EXECUTIVE REPORT GENERATED")
+        print(f"Markdown Report: {report_result['md_path']}")
+        print(f"JSON Report:     {report_result['json_path']}")
+        print(f"Overall Score:   {report_result['indices']['overall_score']}%")
+        print(f"Compliance:      {report_result['indices']['compliance_status']}")
+        print("=" * 65 + "\n")
+        return report_result
+
 
     # ----------------------------------------------------
     # MASTER EXECUTION
     # ----------------------------------------------------
 
     def run(self):
+        all_summaries = {}
 
-        print( "Generating QA Dataset...")
-        qa_dataset = (self.generate_qa_dataset())
-        
+        print("Generating QA Dataset...")
+        qa_dataset = self.generate_qa_dataset()
+
+        # Step 1: Answer Quality
         print("Running Answer Quality Evaluation...")
-        self.run_answer_quality_evaluation(qa_dataset)
+        _, aq_summary = self.run_answer_quality_evaluation(qa_dataset)
+        all_summaries["answer_quality"] = aq_summary
         print("Answer Quality Evaluation completed successfully.")
 
+        # Step 2: Retrieval
         print("Running Retrieval Evaluation...")
-        self.run_retrieval(qa_dataset)
+        _, ret_summary = self.run_retrieval_evaluation(qa_dataset)
+        all_summaries["retrieval"] = ret_summary
         print("Retrieval Evaluation completed successfully.")
 
+        # Step 3: RBAC Security
         print("Running RBAC Security Evaluation...")
-        self.run_rbac_security(qa_dataset)
+        _, rbac_summary = self.run_rbac_security_evaluation(qa_dataset)
+        all_summaries["rbac_security"] = rbac_summary
         print("RBAC Evaluation completed successfully.")
 
+        # Step 4: Latency
         print("Running Latency Evaluation...")
-        self.run_latency([
-            ("dummy_function", lambda x: x*2, [5], {}),
+        _, lat_summary = self.run_latency_evaluation([
+            ("dummy_function", lambda x: x * 2, [5], {}),
         ])
+        all_summaries["latency"] = lat_summary
         print("Latency Evaluation completed successfully.")
 
+        # Step 5: Vector DB
         print("Running Vector DB Evaluation...")
-        self.run_vector_db([
+        _, vdb_summary = self.run_vector_db_evaluation([
             {
                 "query": "What is AI?",
                 "query_embedding": np.array([0.1, 0.2, 0.3]),
-                "doc_embeddings": np.array([[0.1,0.2,0.3],[0.2,0.1,0.0],[0.3,0.3,0.3]]),
-                "retrieval_times": [0.01, 0.02, 0.03]
+                "doc_embeddings": np.array([[0.1, 0.2, 0.3], [0.2, 0.1, 0.0], [0.3, 0.3, 0.3]]),
+                "retrieval_times": [0.01, 0.02, 0.03],
             }
         ])
+        all_summaries["vector_db"] = vdb_summary
+        print("Vector DB Evaluation completed successfully.")
 
+        # Step 6: Text To SQL
         print("Running Text To SQL Evaluation...")
-        self.run_text_to_sql(qa_dataset)
+        _, sql_summary = self.run_text_to_sql_evaluation(qa_dataset)
+        all_summaries["text_to_sql"] = sql_summary
         print("Text To SQL Evaluation completed successfully.")
 
+        # Step 7: Audit Monitoring
         print("Running Audit Monitoring Evaluation...")
-        self.run_audit_monitoring()
+        _, audit_summary = self.run_audit_monitoring_evaluation()
+        all_summaries["audit_monitoring"] = audit_summary
         print("Audit Monitoring Evaluation completed successfully.")
+
+        # Step 8: Final Report Generation
+        print("Generating Final Executive Report...")
+        report_result = self.generate_final_report(all_summaries)
+        print("Evaluation Pipeline Execution Finished.")
+
+        return report_result
 
 # ==========================================
 # Entry Point

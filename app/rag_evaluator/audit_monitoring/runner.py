@@ -30,24 +30,25 @@ class AuditMonitoringRunner:
                 - action: str
                 - status: str ("granted" or "denied")
         """
+        # 1. Invoke evaluator with prepared events
+        summary_metrics = self.evaluator.evaluate(events)
+
+        # 2. Add timestamp to events if missing for raw report
+        prepared_rows = []
         for ev in events:
-            self.evaluator.log_event(ev["user"], ev["role"], ev["action"], ev["status"])
+            row = dict(ev)
+            if "timestamp" not in row:
+                row["timestamp"] = self.timestamp
+            prepared_rows.append(row)
 
-        logs = self.evaluator.get_logs()
-        metrics = self.evaluator.evaluate()
-
-        result_df = pd.DataFrame(logs)
+        # 3. Save raw CSV
+        result_df = pd.DataFrame(prepared_rows)
         result_file = self.raw_results_dir / f"audit_monitoring_results_{self.timestamp}.csv"
         result_df.to_csv(result_file, index=False)
 
-        summary = {
-            "samples": metrics["total_logs"],
-            "violations": metrics["violations"],
-            "violation_rate": round(metrics["violation_rate"], 3),
-        }
-
+        # 4. Save summary JSON
         summary_file = self.summary_dir / f"audit_monitoring_summary_{self.timestamp}.json"
         with open(summary_file, "w") as f:
-            json.dump(summary, f, indent=4)
+            json.dump(summary_metrics, f, indent=4)
 
-        return result_df, summary
+        return result_df, summary_metrics
