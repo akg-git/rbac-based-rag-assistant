@@ -19,6 +19,9 @@ except ImportError:  # pragma: no cover - exercised when optional deps are missi
 
 import os, json, logging, re
 from typing import Dict
+from dotenv import load_dotenv
+
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -41,8 +44,9 @@ def _safe_json_loads(raw_output: str):
         return None
 
 class AnswerQualityEvaluator:
-    def __init__(self, embedding_model="sentence-transformers/all-MiniLM-L6-v2"):
+    def __init__(self, embedding_model="sentence-transformers/all-MiniLM-L6-v2", model_name=None):
         self.embedding_model_name = embedding_model
+        self.model_name = model_name or os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
         self._embedder = None
         self._groq_client = None
 
@@ -137,7 +141,7 @@ class AnswerQualityEvaluator:
         """
         try:
             response = self.groq_client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
+                model=self.model_name,
                 messages=[{"role": "user", "content": prompt}]
             )
             

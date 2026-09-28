@@ -37,6 +37,9 @@ def get_allowed_tables_for_role(role: str) -> list[str]:
             """
             params = [normalized_role]
         return [row[0] for row in conn.execute(query, params).fetchall()]
+    except Exception as e:
+        logger.error(f"[RBAC] Error retrieving allowed tables for role '{role}': {e}", exc_info=True)
+        return []
     finally:
         conn.close()
 

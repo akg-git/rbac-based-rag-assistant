@@ -11,6 +11,9 @@ from datetime import datetime
 import pandas as pd
 import numpy as np
 from groq import Groq
+from dotenv import load_dotenv
+
+load_dotenv()
 
 from app.utils.rag_module import vectorstore, model 
 from langchain_classic.chains import RetrievalQA
@@ -95,7 +98,7 @@ logging.basicConfig(
     force=True,
 )
 
-MODEL_NAME = "llama-3.3-70b-versatile"
+MODEL_NAME = os.getenv("GROQ_MODEL")
 
 client = Groq(
     api_key=os.getenv("GROQ_API_KEY")
@@ -178,7 +181,7 @@ class EvaluationPipeline:
     # ==========================================
     # GENERATE QA PAIRS
     # ==========================================
-    def generate_qa_pairs(self, text_chunk, num_questions=1):
+    def generate_qa_pairs(self, text_chunk, num_questions=2):
 
         # actual_prompt = """There are 10 documents present in total under resources/data with .md and .csv extensions, each document is associated with a specific role. Carefully visit each docuemnt and
         #                 generate total {num_questions} unique factual questions across 10 docuemnts and exactly one question from each document that satisfy all conditions:"""
@@ -186,8 +189,7 @@ class EvaluationPipeline:
         prompt = f"""
                 You are generating evaluation questions for an enterprise RAG system.
 
-                There are 5 departments present in total under resources/data with .md and .csv extensions, each departments is associated with a specific role. Carefully visit each departments and
-                generate total 5 unique factual QA pairs across departments that satisfy all conditions:
+                Based ONLY on the Document text provided below, generate exactly {num_questions} unique factual QA pairs that satisfy all conditions:
 
                 - answer must be concise
                 - answer should contain only necessary information
@@ -203,16 +205,14 @@ class EvaluationPipeline:
                 {text_chunk}
                 \"\"\"
 
-                Return ONLY valid JSON.
+                Return ONLY valid JSON. The JSON must contain a list/array of objects.
 
-                Example:
-                Return JSON:
-
+                Example JSON format:
                 [
-                {{
-                    "question": "My Question1",
-                    "answer": "My Question1 answer"
-                }}
+                  {{
+                      "question": "Sample Question 1?",
+                      "answer": "Sample Answer 1"
+                  }}
                 ]
                 """
         try:

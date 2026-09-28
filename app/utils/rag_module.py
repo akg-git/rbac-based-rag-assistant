@@ -46,18 +46,6 @@ groq_client = Groq(api_key=groq_api_key)
 # ====Split,load,embed==========
 # ==============================
 
-# # Create the embedding function
-# hf_embeddings = embedding_functions.HuggingFaceEmbeddingFunction(
-#     api_key=hf_api_key,
-#     model_name="sentence-transformers/all-MiniLM-L6-v2"
-# )
-
-# vectorstore = Chroma(
-#     # name="my_huggingface_collection",
-#     persist_directory="chroma_db",
-#     embedding_function=hf_embeddings
-# )
-
 # Create the embedding function using LangChain
 embeddings = HuggingFaceEmbeddings(
     model_name="sentence-transformers/all-MiniLM-L6-v2"
@@ -258,7 +246,7 @@ chat_prompt = ChatPromptTemplate.from_messages([
 # Model
 model = ChatGroq(
     groq_api_key=groq_api_key,
-    model_name="llama-3.3-70b-versatile",
+    model_name=os.getenv("GROQ_MODEL"),
     temperature=0.2
 )
 
@@ -270,7 +258,7 @@ def wrap_with_reranker(retriever, cohere_api_key, top_n=4):
     # Create Cohere's reranker with the vector DB using the base retriever
     reranker = CohereRerank(
         cohere_api_key=cohere_api_key, 
-        model="rerank-english-v3.0", 
+        model="rerank-4-fast", 
         top_n=top_n
     )
 

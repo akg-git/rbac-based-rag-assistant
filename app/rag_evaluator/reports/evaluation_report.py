@@ -28,7 +28,7 @@ class EvaluationReport:
         self,
         report_dir: Path = Path("app/rag_evaluator/reports"),
         client: Any = None,
-        model_name: str = "llama-3.3-70b-versatile",
+        model_name: Optional[str] = None,
     ):
         self.report_dir = Path(report_dir)
         self.summary_dir = self.report_dir / "summaries"
@@ -38,7 +38,7 @@ class EvaluationReport:
         self.final_report_dir.mkdir(parents=True, exist_ok=True)
 
         self.client = client
-        self.model_name = model_name
+        self.model_name = model_name or os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 
     def load_latest_summaries(self) -> Dict[str, Dict[str, Any]]:
         """
