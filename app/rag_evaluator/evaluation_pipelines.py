@@ -1,23 +1,20 @@
 import logging
 import os
-import json
-import time
 import shutil
 import zipfile
 import subprocess
 from pathlib import Path
 from datetime import datetime
 
-import pandas as pd
 import numpy as np
 from groq import Groq
 from dotenv import load_dotenv
 
 load_dotenv()
 
-from app.utils.rag_module import vectorstore, model 
-from langchain_classic.chains import RetrievalQA
+from app.utils.rag_module import vectorstore
 
+from app.rag_evaluator.evaluation_dataset_builder import EvaluationDatasetBuilder
 from app.rag_evaluator.answer_quality.runner import AnswerQualityRunner
 from app.rag_evaluator.retrieval.runner import RetrievalRunner
 from app.rag_evaluator.rbac_security.runner import RbacSecurityRunner
@@ -41,7 +38,7 @@ LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 def archive_previous_logs(log_dir: Path) -> None:
     """
-    Compress prior pipeline logs into 7z (or zip fallback) and store in log_dir / 'archives'.
+    Archive prior files into 7z (or zip fallback) under log_dir / 'archives'.
     """
     archives_dir = log_dir / "archives"
     archives_dir.mkdir(parents=True, exist_ok=True)
@@ -50,39 +47,45 @@ def archive_previous_logs(log_dir: Path) -> None:
     has_7z = bool(shutil.which("7z") or os.path.exists(seven_zip_exe))
     seven_zip_cmd = shutil.which("7z") or seven_zip_exe
 
-    for log_file in log_dir.glob("*.log"):
-        if log_file.exists() and log_file.stat().st_size > 0:
-            mtime = datetime.fromtimestamp(log_file.stat().st_mtime).strftime("%Y%m%d_%H%M%S")
-            archived = False
+    for output_file in log_dir.iterdir():
+        if not output_file.is_file() or output_file.stat().st_size == 0:
+            continue
 
-            if has_7z:
-                archive_7z = archives_dir / f"{log_file.stem}_{mtime}.7z"
-                try:
-                    subprocess.run(
-                        [seven_zip_cmd, "a", "-t7z", "-y", str(archive_7z), str(log_file)],
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        check=True,
-                    )
-                    archived = True
-                except Exception:
-                    archived = False
+        mtime = datetime.fromtimestamp(output_file.stat().st_mtime).strftime("%Y%m%d_%H%M%S")
+        archive_name = f"{output_file.stem}_{output_file.suffix.lstrip('.')}_{mtime}"
+        archived = False
 
-            if not archived:
-                archive_zip = archives_dir / f"{log_file.stem}_{mtime}.zip"
-                try:
-                    with zipfile.ZipFile(archive_zip, "w", zipfile.ZIP_DEFLATED) as zf:
-                        zf.write(log_file, arcname=log_file.name)
-                    archived = True
-                except Exception:
-                    pass
+        if has_7z:
+            archive_7z = archives_dir / f"{archive_name}.7z"
+            try:
+                subprocess.run(
+                    [seven_zip_cmd, "a", "-t7z", "-y", str(archive_7z), str(output_file)],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    check=True,
+                )
+                archived = True
+            except Exception:
+                archived = False
 
-            if archived:
-                try:
-                    with open(log_file, "w", encoding="utf-8") as f:
+        if not archived:
+            archive_zip = archives_dir / f"{archive_name}.zip"
+            try:
+                with zipfile.ZipFile(archive_zip, "w", zipfile.ZIP_DEFLATED) as zf:
+                    zf.write(output_file, arcname=output_file.name)
+                archived = True
+            except Exception:
+                pass
+
+        if archived:
+            try:
+                if output_file.suffix.lower() == ".log":
+                    with open(output_file, "w", encoding="utf-8") as f:
                         f.truncate(0)
-                except Exception:
-                    pass
+                else:
+                    output_file.unlink()
+            except Exception:
+                pass
 
 
 # Archive previous run logs before initializing logger
@@ -136,173 +139,20 @@ class EvaluationPipeline:
         self.text_to_sql_runner = TextToSQLRunner(report_dir=REPORT_DIR)
 
         self.groq_client = client
+        self.evaluation_dataset_builder = EvaluationDatasetBuilder(
+            groq_client=self.groq_client,
+            vectorstore=vectorstore,
+            model_name=MODEL_NAME,
+            data_dir=DATA_DIR,
+            raw_results_dir=self.raw_results_dir,
+            timestamp=self.timestamp,
+        )
 
         self.evaluation_report = EvaluationReport(
             report_dir=REPORT_DIR,
             client=self.groq_client,
             model_name=MODEL_NAME,
         )
-
-    # ==========================================
-    # Load Documents
-    # ==========================================
-
-    def load_source_documents(self, data_dir=DATA_DIR):
-        documents = []
-
-        for role_dir in data_dir.iterdir():
-
-            if not role_dir.is_dir():
-                continue
-
-            role = role_dir.name.lower()
-
-            for file in role_dir.glob("*"):
-
-                if file.suffix.lower() not in [".txt", ".md", ".csv"]:
-                    continue
-                
-                if file.suffix.lower() == ".csv":
-                    import pandas as pd
-                    df = pd.read_csv(file)
-                    content = df.to_string()
-                else:
-                    with open(file, "r", encoding="utf-8") as f:
-                        content = f.read()
-
-                documents.append({
-                    "role": role,
-                    "source": file.name,
-                    "content": content
-                })
-
-        return documents
-
-    # ==========================================
-    # GENERATE QA PAIRS
-    # ==========================================
-    def generate_qa_pairs(self, text_chunk, num_questions=2):
-
-        # actual_prompt = """There are 10 documents present in total under resources/data with .md and .csv extensions, each document is associated with a specific role. Carefully visit each docuemnt and
-        #                 generate total {num_questions} unique factual questions across 10 docuemnts and exactly one question from each document that satisfy all conditions:"""
-
-        prompt = f"""
-                You are generating evaluation questions for an enterprise RAG system.
-
-                Based ONLY on the Document text provided below, generate exactly {num_questions} unique factual QA pairs that satisfy all conditions:
-
-                - answer must be concise
-                - answer should contain only necessary information
-                - answerable directly from the document
-                - specific and objective
-                - non-overlapping
-                - cover different sections of the document
-                - avoid yes/no questions
-                - avoid duplicate meaning
-
-                Document:
-                \"\"\"
-                {text_chunk}
-                \"\"\"
-
-                Return ONLY valid JSON. The JSON must contain a list/array of objects.
-
-                Example JSON format:
-                [
-                  {{
-                      "question": "Sample Question 1?",
-                      "answer": "Sample Answer 1"
-                  }}
-                ]
-                """
-        try:
-            response = self.groq_client.chat.completions.create(
-                model=MODEL_NAME,
-                temperature=0,
-                response_format={"type": "json_object"},
-                messages=[
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ]
-            )
-
-            response_text = response.choices[0].message.content.strip()
-
-            # Groq sometimes wraps arrays inside object
-            parsed = json.loads(response_text)
-
-            if isinstance(parsed, dict):
-                if "qa_pairs" in parsed:
-                    return parsed["qa_pairs"]
-
-                if "questions" in parsed:
-                    return parsed["questions"]
-
-            if isinstance(parsed, list):
-                return parsed
-
-            return []
-        
-        except Exception as e:
-            print(f"QA generation failed: {e}")
-            return []
-
-    # ==========================================
-    # Build Dataset
-    # ==========================================
-
-    def generate_qa_dataset(self, output_csv="sample_qa_pairs.csv"):
-
-        documents = self.load_source_documents(DATA_DIR)
-
-        qa_list = []
-
-        for doc in documents:
-
-            print(f"Generating QA pairs for {doc['source']} ({doc['role']})")
-            qa_pairs = self.generate_qa_pairs(doc["content"], num_questions=3)
-
-            if len(qa_pairs) < 3:
-                print(f"Warning: only {len(qa_pairs)} questions generated for {doc['source']}")
-
-            for qa in qa_pairs:
-                retrieved_docs = []
-                try:
-                    raw_hits = vectorstore.similarity_search(
-                        qa["question"],
-                        k=4,
-                        filter={"role": doc["role"]}
-                    )
-                    retrieved_docs = [hit.page_content for hit in raw_hits]
-                except Exception as retrieve_error:
-                    print(f"Retrieval lookup failed for '{qa['question']}': {retrieve_error}")
-
-                relevant_docs = [doc["content"]]
-                if not retrieved_docs:
-                    retrieved_docs = relevant_docs
-
-                qa_list.append({
-                    "question": qa["question"],
-                    "answer": qa["answer"],
-                    "role": doc["role"],
-                    "source": doc["source"],
-                    "retrieved_docs": retrieved_docs,
-                    "context": "\n".join(retrieved_docs),
-                    "relevant_docs": relevant_docs,
-                })
-
-                time.sleep(1.2)
-            
-        output_file = self.raw_results_dir / f"qa_dataset_{self.timestamp}.csv"
-        pd.DataFrame(qa_list).to_csv(output_file, index=False)
-
-        print(f"\nGenerated {len(qa_list)} QA pairs.")
-        print(f"Saved to: {output_file}")
-
-        return qa_list
-
 
     # Run Answer Quality Evaluation
     def run_answer_quality_evaluation(self, qa_dataset):
@@ -389,8 +239,15 @@ class EvaluationPipeline:
     def run(self):
         all_summaries = {}
 
+        for output_dir in [
+            self.raw_results_dir,
+            self.summary_dir,
+            self.final_report_dir,
+        ]:
+            archive_previous_logs(output_dir)
+
         print("Generating QA Dataset...")
-        qa_dataset = self.generate_qa_dataset()
+        qa_dataset = self.evaluation_dataset_builder.generate_qa_dataset()
 
         # Step 1: Answer Quality
         print("Running Answer Quality Evaluation...")
