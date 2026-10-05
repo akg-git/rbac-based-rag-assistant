@@ -26,9 +26,25 @@ class RetrievalRunner:
 
         for qa in qa_dataset:
             query = qa["question"]
-            ground_truth = qa["answer"]
+            ground_truth = qa.get("answer", qa.get("ground_truth", ""))
             retrieved_docs = qa.get("retrieved_docs", [])
-            relevant_docs = qa.get("relevant_docs", [ground_truth])
+            raw_relevant = qa.get("relevant_docs", [ground_truth])
+            context_chunk = qa.get("context", "")
+
+            # Sanitize relevant_docs: if raw_relevant contains full file content (>3000 chars),
+            # use context chunk and ground_truth instead to avoid false containment hits.
+            relevant_docs = []
+            for doc_item in raw_relevant:
+                if isinstance(doc_item, str) and len(doc_item) > 3000:
+                    if context_chunk and len(context_chunk) <= 3000:
+                        relevant_docs.append(context_chunk)
+                    else:
+                        relevant_docs.append(ground_truth)
+                else:
+                    relevant_docs.append(doc_item)
+
+            if not relevant_docs:
+                relevant_docs = [ground_truth]
 
             if not retrieved_docs:
                 print(f"Warning: missing retrieved_docs for question: {query}")

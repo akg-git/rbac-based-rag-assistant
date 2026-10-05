@@ -49,20 +49,31 @@ class AnswerQualityRunner:
 
         for qa in qa_dataset:
             query = qa["question"]
-            ground_truth = qa["answer"]
+            ground_truth = qa.get("answer", qa.get("ground_truth", ""))
+
+            generated_answer = qa.get("generated_answer")
+            if not generated_answer:
+                try:
+                    from app.utils.rag_module import get_rag_chain
+                    role = qa.get("role", "general")
+                    chain = get_rag_chain(user_role=role)
+                    res = chain.invoke({"input": query})
+                    generated_answer = res.get("answer", "")
+                except Exception as e:
+                    generated_answer = f"Error generating answer: {e}"
 
             scores = self.evaluator.evaluate_answer(
                 query=query,
-                context=qa.get("context", ""),  # context may be optional
-                generated_answer=qa.get("generated_answer", ground_truth),
+                context=qa.get("context", ""),
+                generated_answer=generated_answer,
                 reference_answer=ground_truth
             )
 
             result_row = {
                 "question": query,
-                "role": qa["role"],
-                "source": qa["source"],
-                "generated_answer": qa.get("generated_answer", ground_truth),
+                "role": qa.get("role", "general"),
+                "source": qa.get("source", "unknown"),
+                "generated_answer": generated_answer,
                 "ground_truth": ground_truth,
                 **scores
             }

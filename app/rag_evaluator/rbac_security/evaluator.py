@@ -1,15 +1,34 @@
 # evaluator.py
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 class RBACSecurityEvaluator:
-    def __init__(self, role_permissions: Dict[str, List[str]]):
+    def __init__(
+        self,
+        role_permissions: Dict[str, List[str]],
+        min_permissions: Optional[Dict[str, List[str]]] = None,
+    ):
         """
-        role_permissions: dict mapping role -> list of allowed actions/resources
-        Example: {  "C-Level": ["read", "create", "update", "delete"],
-                    "HR": ["read", "update", "read_general"],
-                    "General": ["read_general"]     }
+        role_permissions: dict mapping role -> list of allowed actions/resources.
+        min_permissions:  optional dict mapping role -> *minimum* required actions.
+
+        Example:
+            role_permissions = {
+                "C-Level": ["read", "create", "update", "delete"],
+                "HR":      ["read", "update", "read_general"],
+                "General": ["read_general"]
+            }
+            min_permissions = {
+                "C-Level": ["read", "create", "update", "delete"],
+                "HR":      ["read", "update", "read_general"],
+                "General": ["read_general"]
+            }
         """
         self.role_permissions = role_permissions
+        self.min_permissions: Dict[str, List[str]] = (
+            {k.casefold(): list(v) for k, v in min_permissions.items()}
+            if min_permissions
+            else {}
+        )
 
     def check_access(self, role: str, action: str) -> bool:
         """Check if a given role is allowed to perform an action."""
@@ -31,7 +50,19 @@ class RBACSecurityEvaluator:
         denied = len(query_actions) - permitted
 
         role_match = 1.0 if permitted > 0 else 0.0
-        least_privilege = 1.0 if role_match and len(allowed) == 1 else 0.5 if role_match else 0.0
+
+        # Least-privilege:
+        # 1.0  → granted ⊆ minimum
+        # 0.0  → granted ⊃ minimum
+        # 0.5  → no minimum baseline defined (neutral / unverifiable)
+        min_key = role.casefold()
+        if min_key in self.min_permissions:
+            granted_set = set(allowed)
+            minimum_set = set(self.min_permissions[min_key])
+            least_privilege = 1.0 if granted_set <= minimum_set else 0.0
+        else:
+            least_privilege = 0.5 if role_match else 0.0
+
         auditability = 1.0 if query_actions else 0.0
         unauthorized_access = 1 if denied else 0
 

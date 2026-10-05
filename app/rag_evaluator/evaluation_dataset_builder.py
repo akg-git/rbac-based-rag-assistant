@@ -150,13 +150,24 @@ class EvaluationDatasetBuilder:
                         f"{retrieve_error}"
                     )
 
-                relevant_docs = [doc["content"]]
+                relevant_docs = [context, qa["answer"]]
                 if not retrieved_docs:
-                    retrieved_docs = relevant_docs
+                    retrieved_docs = [context]
+
+                # Generate actual answer from RAG chain for this question & role
+                generated_answer = ""
+                try:
+                    from app.utils.rag_module import get_rag_chain
+                    chain = get_rag_chain(user_role=doc["role"])
+                    res = chain.invoke({"input": qa["question"]})
+                    generated_answer = res.get("answer", "")
+                except Exception as gen_err:
+                    print(f"RAG answer generation failed for '{qa['question']}': {gen_err}")
 
                 qa_list.append({
                     "question": qa["question"],
                     "answer": qa["answer"],
+                    "generated_answer": generated_answer,
                     "role": doc["role"],
                     "source": doc["source"],
                     "retrieved_docs": retrieved_docs,

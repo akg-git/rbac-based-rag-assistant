@@ -26,7 +26,28 @@ class RetrievalEvaluator:
     def _is_relevant(expected: str, retrieved: str) -> bool:
         expected_norm = expected.strip().lower()
         retrieved_norm = retrieved.strip().lower()
-        return expected_norm in retrieved_norm or retrieved_norm in expected_norm
+
+        if not expected_norm or not retrieved_norm:
+            return False
+
+        # 1. Answer / phrase containment: expected target is in retrieved chunk
+        if expected_norm in retrieved_norm:
+            return True
+
+        # 2. Token overlap: for context snippets, check token coverage
+        exp_tokens = set(expected_norm.split())
+        ret_tokens = set(retrieved_norm.split())
+
+        if not exp_tokens or not ret_tokens:
+            return False
+
+        common = exp_tokens.intersection(ret_tokens)
+        min_tokens = min(len(exp_tokens), len(ret_tokens))
+
+        if min_tokens > 0 and (len(common) / min_tokens) >= 0.6:
+            return True
+
+        return False
 
     @staticmethod
     def _context_precision(

@@ -3,11 +3,10 @@ import logging
 import pandas as pd
 import time
 from pathlib import Path
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional
 
 from app.rag_evaluator.text_to_sql.evaluator import TextToSQLEvaluator
-from app.utils.sql_query import translate_nl_to_sql
-from app.utils.sql_query import get_allowed_tables_for_role
+from app.utils.sql_query import translate_nl_to_sql, get_allowed_tables_for_role
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +17,7 @@ class TextToSQLRunner:
     Handles execution, persistence, and summary generation.
     """
 
-    def __init__(self, report_dir: Path = Path("app/rag_evaluator/reports")):
+    def __init__(self, report_dir: Path = Path("app/rag_evaluator/reports"), schema: Optional[Dict[str, List[str]]] = None):
         self.timestamp = time.strftime("%Y%m%d_%H%M%S")
         self.report_dir = Path(report_dir) if report_dir is not None else Path("app/rag_evaluator/reports")
         self.raw_results_dir = self.report_dir / "raw_results"
@@ -28,42 +27,70 @@ class TextToSQLRunner:
         for folder in [self.raw_results_dir, self.summary_dir, self.logs_dir]:
             folder.mkdir(parents=True, exist_ok=True)
 
-        schema = {
-            "users": ["id", "name", "email", "role_id"],
-            "roles": ["id", "role_name", "permissions"],
-            "documents": ["id", "title", "content", "created_at", "owner_role"],
-            "orders": ["id", "user_id", "amount", "status", "created_at"],
-            "audit_logs": ["id", "event_type", "role", "action", "timestamp", "status"]
-        }
+        if schema is None:
+            schema = self._load_duckdb_schema()
 
         self.evaluator = TextToSQLEvaluator(schema)
+
+    def _load_duckdb_schema(self) -> Dict[str, List[str]]:
+        """Dynamically fetch schema from active DuckDB catalog. Fallback only if database is empty."""
+        try:
+            from app.schemas.duckdb import get_duckdb_conn, get_duckdb_schema
+            conn = get_duckdb_conn(read_only=True)
+            db_schema = get_duckdb_schema(conn)
+            conn.close()
+            if db_schema:
+                return db_schema
+        except Exception as exc:
+            logger.warning(f"Could not load dynamic DuckDB schema: {exc}")
+
+        # Fallback ONLY when DuckDB database has no tables loaded
+        return {
+            "hr_data": ["employee_id", "full_name", "role", "department", "email", "location", "salary"],
+        }
 
     def run(self, sql_dataset: List[Dict]) -> Tuple[pd.DataFrame, Dict[str, float]]:
         """
         Args:
             sql_dataset: list of dicts with keys:
-                - query: str (SQL string)
-                - source: str (origin of query)
+                - question (or query): str
+                - role: str
+                - source: str (optional)
         """
         results = []
 
         for item in sql_dataset:
+            question = item.get("question", item.get("query", ""))
+            role = item.get("role", "general")
 
-            allowed_tables = get_allowed_tables_for_role(item["role"])
-            sql = translate_nl_to_sql(item["question"], allowed_tables) 
-
-            if sql is None:
-                logger.warning("Skipping text-to-SQL row without query/question key: %s", item)
+            if not question:
+                logger.warning("Skipping text-to-SQL row without question/query key: %s", item)
                 continue
 
-            scores = self.evaluator.evaluate(sql)
+            allowed_tables = get_allowed_tables_for_role(role)
+            sql = translate_nl_to_sql(question, allowed_tables)
+
+            if not sql or sql.strip() == "INVALID_QUERY":
+                logger.warning("Failed text-to-SQL generation for question: %s", question)
+                scores = {
+                    "valid_syntax": False,
+                    "valid_schema": False,
+                    "is_read_only": True,
+                    "errors": ["Failed to generate valid SQL query"]
+                }
+                sql = "INVALID_QUERY"
+            else:
+                scores = self.evaluator.evaluate(sql)
 
             result_row = {
+                "question": question,
+                "role": role,
                 "query": sql,
-                "source": item.get("source","unknown"),
+                "source": item.get("source", "unknown"),
                 "valid_syntax": scores["valid_syntax"],
                 "valid_schema": scores["valid_schema"],
-                "errors": ";".join(scores["errors"]) if scores["errors"] else "",
+                "is_read_only": scores.get("is_read_only", True),
+                "errors": "; ".join(scores["errors"]) if scores["errors"] else "",
             }
             results.append(result_row)
 
@@ -73,9 +100,10 @@ class TextToSQLRunner:
 
         summary = {
             "samples": len(result_df),
-            "syntax_valid_rate": round(result_df["valid_syntax"].mean(), 3),
-            "schema_valid_rate": round(result_df["valid_schema"].mean(), 3),
-            "error_count": sum(1 for e in result_df["errors"] if e),
+            "syntax_valid_rate": round(result_df["valid_syntax"].mean(), 3) if not result_df.empty else 0.0,
+            "schema_valid_rate": round(result_df["valid_schema"].mean(), 3) if not result_df.empty else 0.0,
+            "read_only_rate": round(result_df["is_read_only"].mean(), 3) if not result_df.empty else 1.0,
+            "error_count": sum(1 for e in result_df["errors"] if e) if not result_df.empty else 0,
         }
 
         summary_file = self.summary_dir / f"text_to_sql_summary_{self.timestamp}.json"

@@ -140,5 +140,44 @@ class TestAnswerQualityEvaluator(unittest.TestCase):
             self.assertIsInstance(result[metric], float)
             self.assertEqual(result[metric], 0.5)
 
+
+class TestAnswerQualityRunner(unittest.TestCase):
+
+    @patch("app.rag_evaluator.answer_quality.runner.AnswerQualityEvaluator")
+    @patch("app.utils.rag_module.get_rag_chain")
+    def test_runner_generates_answer_if_missing(self, mock_get_chain, mock_evaluator_cls):
+        from app.rag_evaluator.answer_quality.runner import AnswerQualityRunner
+
+        mock_chain = MagicMock()
+        mock_chain.invoke.return_value = {"answer": "Actual RAG output"}
+        mock_get_chain.return_value = mock_chain
+
+        mock_evaluator = MagicMock()
+        mock_evaluator.evaluate_answer.return_value = {
+            "faithfulness": 0.9,
+            "relevance": 0.8,
+            "completeness": 0.85,
+            "clarity": 0.9,
+            "embedding_similarity": 0.88,
+        }
+        mock_evaluator_cls.return_value = mock_evaluator
+
+        runner = AnswerQualityRunner()
+        qa_dataset = [
+            {
+                "question": "What is the policy?",
+                "answer": "Ground truth reference answer",
+                "role": "hr",
+                "source": "hr_policy.md",
+            }
+        ]
+
+        df, summary = runner.run(qa_dataset)
+
+        self.assertEqual(len(df), 1)
+        self.assertEqual(df.iloc[0]["generated_answer"], "Actual RAG output")
+        self.assertNotEqual(df.iloc[0]["generated_answer"], df.iloc[0]["ground_truth"])
+        mock_get_chain.assert_called_once_with(user_role="hr")
+
 if __name__ == "__main__":
     unittest.main()

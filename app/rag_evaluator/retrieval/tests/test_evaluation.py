@@ -68,5 +68,22 @@ class TestRetrievalEvaluator(unittest.TestCase):
             self.assertGreaterEqual(results[metric], 0.0)
             self.assertLessEqual(results[metric], 1.0)
 
+    def test_full_file_containment_prevention(self):
+        """
+        Verify that an arbitrary retrieved chunk is NOT marked relevant
+        just because it exists in a massive target document string.
+        """
+        full_doc = "Chapter 1: History. Chapter 2: Finance. Chapter 3: HR policies."
+        target_answer = "HR policies allow 20 days PTO"
+        irrelevant_chunk = "Chapter 1: History of company founded in 1995"
+        
+        # When comparing target answer against irrelevant chunk, _is_relevant should be False
+        is_rel = RetrievalEvaluator._is_relevant(target_answer, irrelevant_chunk)
+        self.assertFalse(is_rel)
+
+        # When comparing full doc against irrelevant chunk without containment inversion, it must be False
+        is_rel_full = RetrievalEvaluator._is_relevant(full_doc, irrelevant_chunk)
+        self.assertFalse(is_rel_full)
+
 if __name__ == "__main__":
     unittest.main()

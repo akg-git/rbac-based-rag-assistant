@@ -67,6 +67,8 @@ class AnswerQualityEvaluator:
 
     def embedding_similarity(self, generated_answer: str, reference_answer: str) -> float:
         """Compute cosine similarity between generated and reference answers."""
+        if not generated_answer or not reference_answer or str(generated_answer).startswith("Error"):
+            return 0.0
         if self.embedder is None or util is None:
             return 0.0
 
@@ -112,24 +114,26 @@ class AnswerQualityEvaluator:
         
         return validated
 
-    def llm_judge(self, query: str, context: str, answer: str) -> Dict[str, float]:
+    def llm_judge(self, query: str, context: str, answer: str, reference_answer: str = None) -> Dict[str, float]:
         """Use Groq LLM to rate answer quality on multiple dimensions."""
         if self.groq_client is None:
             return {metric: 0.5 for metric in REQUIRED_METRICS}
 
+        # Reference Answer helps in Ground Truth evaluation
+        ref_clause = f"\nGround Truth Reference Answer: {reference_answer}" if reference_answer else ""
         prompt = f"""You are an evaluator for a RAG system.
 
-        Evaluate the predicted answer to a question using the retrieved context and compare it to the ground truth.
+        Evaluate the predicted answer to a question using the retrieved context and compare it to the ground truth reference answer (if provided).
 
         Return a JSON object with the following keys and value must be float between 0.0 and 1.0:
-        - "Faithfulness": Is the predicted answer grounded in the retrieved context?
-        - "Relevance": Is the answer relevant to the question?
+        - "Faithfulness": Is the predicted answer grounded in the retrieved context without hallucination?
+        - "Relevance": Is the answer directly relevant to the query?
         - "Clarity": How clear and understandable is the answer?
-        - "Completeness": Does the answer fully address the question?
+        - "Completeness": Does the answer fully address the question comparing with the retrieved context and reference answer?
 
-        Evaluate the following answer for the query: {query}
-        Context: {context}
-        Answer: {answer}
+        Query: {query}
+        Context: {context}{ref_clause}
+        Predicted Answer: {answer}
 
         Provide scores ONLY in valid JSON like:
         {{
@@ -213,10 +217,11 @@ class AnswerQualityEvaluator:
 
         # LLM judge scoring
         llm_scores = self.llm_judge(
-        query,
-        context,
-        generated_answer
-    )
+            query=query,
+            context=context,
+            answer=generated_answer,
+            reference_answer=reference_answer
+        )
 
         results = {
             "faithfulness": llm_scores.get("Faithfulness", 0.0),
