@@ -1,5 +1,5 @@
 import re
-from typing import Dict, Any, List, Set
+from typing import Dict, Any, List
 
 class TextToSQLEvaluator:
     MUTATION_KEYWORDS = {"INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "CREATE", "TRUNCATE", "REPLACE", "GRANT", "REVOKE"}
@@ -45,9 +45,21 @@ class TextToSQLEvaluator:
 
         result["valid_syntax"] = True
 
-        # Extract table names referenced in query (FROM <table>, JOIN <table>)
-        table_matches = re.findall(r"\b(?:FROM|JOIN)\s+([a-zA-Z_][\w]*)", clean_sql, re.IGNORECASE)
-        referenced_tables = [t.casefold() for t in table_matches]
+        # Extract table names and aliases referenced in the query.
+        table_pattern = re.compile(
+            r"\b(?:FROM|JOIN)\s+([a-zA-Z_][\w]*)"
+            r"(?:\s+(?:AS\s+)?([a-zA-Z_][\w]*))?"
+            r"(?=\s+(?:WHERE|GROUP|HAVING|ORDER|LIMIT|JOIN|ON)\b|\s*;|\s*$)",
+            re.IGNORECASE,
+        )
+        table_matches = table_pattern.findall(clean_sql)
+        referenced_tables = [table.casefold() for table, _ in table_matches]
+        table_aliases = {
+            alias.casefold(): table.casefold()
+            for table, alias in table_matches
+            if alias
+        }
+        table_aliases.update({table.casefold(): table.casefold() for table, _ in table_matches})
 
         if not referenced_tables:
             result["errors"].append("No table specified in FROM/JOIN clause.")
@@ -73,39 +85,68 @@ class TextToSQLEvaluator:
             result["valid_schema"] = True
             return result
 
-        # Extract column names from expressions like u.name, COUNT(id), SUM(o.amount) AS total
+        # Extract column names and their optional table qualifiers.
         col_exprs = [c.strip() for c in select_clause.split(",") if c.strip()]
         extracted_cols = []
         sql_func_keywords = {
             "count", "avg", "sum", "min", "max", "distinct", "coalesce", "cast",
-            "nullif", "case", "when", "then", "else", "end", "as", "over", "partition", "by"
+            "nullif", "case", "when", "then", "else", "end", "as", "over", "partition",
+            "by", "where", "group", "having", "order", "limit", "from", "join", "on",
+            "select", "as", "is", "not", "null", "and", "or"
         }
 
         for expr in col_exprs:
-            # Strip AS alias
             expr_no_alias = re.split(r"\bAS\b", expr, flags=re.IGNORECASE)[0].strip()
-            # Find identifiers (e.g. u.name -> name, employee_id -> employee_id)
-            tokens = re.findall(r"\b(?:[a-zA-Z_][\w]*\.)?([a-zA-Z_][\w]*)\b", expr_no_alias)
-            cols = [t.casefold() for t in tokens if t.casefold() not in sql_func_keywords and not t.isdigit()]
-            extracted_cols.extend(cols)
+            identifier_matches = re.findall(
+                r"\b([a-zA-Z_][\w]*)\.([a-zA-Z_][\w]*)\b|\b([a-zA-Z_][\w]*)\b",
+                expr_no_alias,
+                re.IGNORECASE,
+            )
+            for qualifier, column, unqualified_column in identifier_matches:
+                if qualifier:
+                    extracted_cols.append((qualifier.casefold(), column.casefold()))
+                elif unqualified_column.casefold() not in sql_func_keywords:
+                    extracted_cols.append((None, unqualified_column.casefold()))
 
         if not extracted_cols:
             # e.g., SELECT COUNT(*) FROM table -> valid schema if table exists
             result["valid_schema"] = True
             return result
 
-        # Check extracted columns against schema for the referenced tables
-        if self.schema:
-            allowed_cols: Set[str] = set()
-            for t in referenced_tables:
-                allowed_cols.update(self.schema.get(t, []))
+        if not self.schema:
+            result["valid_schema"] = True
+            return result
 
-            invalid_cols = [c for c in extracted_cols if c not in allowed_cols]
-            if invalid_cols:
-                result["errors"].append(f"Column(s) not in schema: {', '.join(invalid_cols)}")
-                result["valid_schema"] = False
-            else:
-                result["valid_schema"] = True
+        invalid_columns = []
+        allowed_columns_by_table = {
+            table: set(self.schema.get(table, []))
+            for table in referenced_tables
+        }
+
+        for qualifier, column in extracted_cols:
+            if qualifier:
+                table = table_aliases.get(qualifier)
+                if table is None:
+                    invalid_columns.append(f"Unknown table alias '{qualifier}' for column '{column}'")
+                    continue
+                if column not in allowed_columns_by_table[table]:
+                    invalid_columns.append(f"Column '{qualifier}.{column}' does not exist in table '{table}'")
+                continue
+
+            matching_tables = [
+                table for table, columns in allowed_columns_by_table.items()
+                if column in columns
+            ]
+            if not matching_tables:
+                invalid_columns.append(f"Column '{column}' does not exist in referenced tables")
+            elif len(matching_tables) > 1:
+                invalid_columns.append(
+                    f"Column '{column}' is ambiguous across tables: {', '.join(sorted(matching_tables))}"
+                )
+
+        if invalid_columns:
+            result["errors"].append("; ".join(invalid_columns))
+            result["valid_schema"] = False
         else:
             result["valid_schema"] = True
 

@@ -1,5 +1,6 @@
 import logging
 import os
+import uuid
 
 import sqlparse
 import tabulate
@@ -8,6 +9,7 @@ from sqlparse.sql import Function, Identifier, IdentifierList, Parenthesis
 from sqlparse.tokens import DML, Keyword, Newline, Whitespace
 
 from app.schemas.duckdb import get_duckdb_conn, get_duckdb_schema
+from app.utils.audit_events import emit_audit_event
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -180,13 +182,62 @@ def is_safe_query(sql: str) -> bool:
         return False
 
 
-def handle_sql_query(question: str, role: str, username: str, return_sql: bool = False) -> dict:
+def _emit_sql_audit_event(
+    *,
+    username: str,
+    role: str,
+    action: str,
+    resource: str,
+    authorization_decision: str,
+    result: str,
+    outcome_status: str,
+    request_id: str,
+    correlation_id: str,
+) -> None:
+    """Persist a canonical authorization event for this SQL request."""
+    emit_audit_event(
+        user_id=username,
+        role=role,
+        action=action,
+        resource=resource,
+        authorization_decision=authorization_decision,
+        result=result,
+        outcome_status=outcome_status,
+        request_id=request_id,
+        correlation_id=correlation_id,
+        query_mode="sql",
+    )
+
+
+def handle_sql_query(
+    question: str,
+    role: str,
+    username: str,
+    return_sql: bool = False,
+    request_id: str | None = None,
+    correlation_id: str | None = None,
+) -> dict:
     """Generate, authorize, validate, and execute one SQL query."""
     conn = get_duckdb_conn()
+    request_id = request_id or str(uuid.uuid4())
+    correlation_id = correlation_id or request_id
+    resource = "sql_query"
+
     try:
         logger.info("[SQL] User=%s, Role=%s, Event=query_started", username, role)
         allowed_tables = get_allowed_tables_for_role(role)
         if not allowed_tables:
+            _emit_sql_audit_event(
+                username=username,
+                role=role,
+                action="query",
+                resource=resource,
+                authorization_decision="denied",
+                result="failure",
+                outcome_status="denied",
+                request_id=request_id,
+                correlation_id=correlation_id,
+            )
             logger.warning(
                 "[SQL] User=%s, Role=%s, Event=query_denied, Reason=no_allowed_tables",
                 username,
@@ -200,9 +251,21 @@ def handle_sql_query(question: str, role: str, username: str, return_sql: bool =
 
         sql = translate_nl_to_sql(question, allowed_tables, conn)
         if sql.strip() == "INVALID_QUERY":
+            _emit_sql_audit_event(
+                username=username,
+                role=role,
+                action="query",
+                resource=resource,
+                authorization_decision="denied",
+                result="failure",
+                outcome_status="failed",
+                request_id=request_id,
+                correlation_id=correlation_id,
+            )
             return {
                 "answer": "Unable to generate a valid SQL query for your question.",
                 "error": True,
+                "error_type": "validation",
             }
 
         valid, referenced_tables, validation_error = validate_sql_query(
@@ -211,23 +274,30 @@ def handle_sql_query(question: str, role: str, username: str, return_sql: bool =
             conn,
         )
         if not valid:
+            is_unauthorized_table = any(
+                table.casefold() not in {allowed.casefold() for allowed in allowed_tables}
+                for table in referenced_tables
+            )
+            _emit_sql_audit_event(
+                username=username,
+                role=role,
+                action="query",
+                resource=resource,
+                authorization_decision="denied",
+                result="failure",
+                outcome_status="unauthorized" if is_unauthorized_table else "failed",
+                request_id=request_id,
+                correlation_id=correlation_id,
+            )
             logger.warning(
                 "[SQL] User=%s, Role=%s, Event=query_denied, Reason=sql_validation_failed",
                 username,
                 role,
             )
-            error_type = (
-                "authorization"
-                if any(
-                    table.casefold() not in {allowed.casefold() for allowed in allowed_tables}
-                    for table in referenced_tables
-                )
-                else "validation"
-            )
             return {
                 "answer": validation_error,
                 "error": True,
-                "error_type": error_type,
+                "error_type": "authorization" if is_unauthorized_table else "validation",
             }
 
         result = conn.execute(sql).fetchall()
@@ -242,6 +312,17 @@ def handle_sql_query(question: str, role: str, username: str, return_sql: bool =
         if return_sql:
             response["sql"] = sql
 
+        _emit_sql_audit_event(
+            username=username,
+            role=role,
+            action="query",
+            resource=resource,
+            authorization_decision="allowed",
+            result="success",
+            outcome_status="authorized",
+            request_id=request_id,
+            correlation_id=correlation_id,
+        )
         logger.info(
             "[SQL] User=%s, Role=%s, Event=query_succeeded, Tables=%s",
             username,
@@ -250,6 +331,17 @@ def handle_sql_query(question: str, role: str, username: str, return_sql: bool =
         )
         return response
     except Exception as exc:
+        _emit_sql_audit_event(
+            username=username,
+            role=role,
+            action="query",
+            resource=resource,
+            authorization_decision="denied",
+            result="failure",
+            outcome_status="failed",
+            request_id=request_id,
+            correlation_id=correlation_id,
+        )
         logger.error(
             "[SQL] User=%s, Role=%s, Event=query_failed, ErrorType=%s",
             username,

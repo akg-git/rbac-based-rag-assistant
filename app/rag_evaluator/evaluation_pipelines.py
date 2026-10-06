@@ -3,16 +3,17 @@ import os
 import shutil
 import zipfile
 import subprocess
+from functools import partial
 from pathlib import Path
 from datetime import datetime
 
-import numpy as np
 from groq import Groq
 from dotenv import load_dotenv
 
 load_dotenv()
 
 from app.utils.rag_module import vectorstore
+from app.utils.rag_chain import rag_handler
 
 from app.rag_evaluator.evaluation_dataset_builder import EvaluationDatasetBuilder
 from app.rag_evaluator.answer_quality.runner import AnswerQualityRunner
@@ -21,6 +22,7 @@ from app.rag_evaluator.rbac_security.runner import RbacSecurityRunner
 from app.rag_evaluator.latency.runner import LatencyRunner
 from app.rag_evaluator.vector_db.runner import VectorDBRunner
 from app.rag_evaluator.audit_monitoring.runner import AuditMonitoringRunner
+from app.utils.audit_events import AUDIT_EVENT_LOG_PATH, load_audit_events
 from app.rag_evaluator.text_to_sql.runner import TextToSQLRunner
 from app.rag_evaluator.reports.evaluation_report import EvaluationReport
 
@@ -186,8 +188,8 @@ class EvaluationPipeline:
         return result_df, summary
 
     # Vector DB Evaluation:
-    def run_vector_db_evaluation(self, queries):
-        result_df, summary = self.vector_db_runner.run(queries)
+    def run_vector_db_evaluation(self, k=5):
+        result_df, summary = self.vector_db_runner.run(k=k)
         print("Vector DB Evaluation completed.")
         print("Summary:", summary)
         return result_df, summary
@@ -199,15 +201,19 @@ class EvaluationPipeline:
         return result_df, summary
 
     def run_audit_monitoring_evaluation(self):
+        persisted_events = load_audit_events(AUDIT_EVENT_LOG_PATH)
 
-        sample_events = [
-            {"user": "alice", "role": "employee", "action": "read_data", "status": "granted"},
-            {"user": "bob", "role": "guest", "action": "delete_data", "status": "denied"},
-            {"user": "charlie", "role": "HR", "action": "update_record", "status": "granted"},
-            {"user": "dave", "role": "employee", "action": "write_data", "status": "denied"},
-        ]
+        if persisted_events:
+            result_df, summary = self.audit_monitoring_runner.run(persisted_events)
+        else:
+            sample_events = [
+                {"user": "alice", "role": "employee", "action": "read_data", "status": "granted"},
+                {"user": "bob", "role": "guest", "action": "delete_data", "status": "denied"},
+                {"user": "charlie", "role": "HR", "action": "update_record", "status": "granted"},
+                {"user": "dave", "role": "employee", "action": "write_data", "status": "denied"},
+            ]
+            result_df, summary = self.audit_monitoring_runner.run(sample_events)
 
-        result_df, summary = self.audit_monitoring_runner.run(sample_events)
         print("Audit Monitoring Evaluation completed.")
         print("Summary:", summary)
         return result_df, summary
@@ -269,22 +275,22 @@ class EvaluationPipeline:
 
         # Step 4: Latency
         print("Running Latency Evaluation...")
-        _, lat_summary = self.run_latency_evaluation([
-            ("dummy_function", lambda x: x * 2, [5], {}),
-        ])
+        latency_workload = [
+            (
+                f"rag_{index + 1}",
+                partial(rag_handler, question=str(item.get("question", "")), role=str(item.get("role", "general"))),
+                [],
+                {},
+            )
+            for index, item in enumerate(qa_dataset[:3])
+        ]
+        _, lat_summary = self.run_latency_evaluation(latency_workload, iterations=3)
         all_summaries["latency"] = lat_summary
         print("Latency Evaluation completed successfully.")
 
         # Step 5: Vector DB
         print("Running Vector DB Evaluation...")
-        _, vdb_summary = self.run_vector_db_evaluation([
-            {
-                "query": "What is AI?",
-                "query_embedding": np.array([0.1, 0.2, 0.3]),
-                "doc_embeddings": np.array([[0.1, 0.2, 0.3], [0.2, 0.1, 0.0], [0.3, 0.3, 0.3]]),
-                "retrieval_times": [0.01, 0.02, 0.03],
-            }
-        ])
+        _, vdb_summary = self.run_vector_db_evaluation(k=5)
         all_summaries["vector_db"] = vdb_summary
         print("Vector DB Evaluation completed successfully.")
 

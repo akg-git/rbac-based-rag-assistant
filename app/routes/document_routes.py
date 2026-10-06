@@ -5,12 +5,13 @@ from fastapi.responses import JSONResponse
 import pandas as pd
 import logging
 import asyncio
+import os
 from concurrent.futures import ThreadPoolExecutor
 
-from app.authentication.auth import authenticate
 from app.schemas.duckdb import get_duckdb_conn
 from app.schemas.sqlitedb import get_sqlite_conn
 from app.utils.rag_module import index_unembedded_document
+from app.utils.audit_context import AuditContext, get_audit_context
 
 logger = logging.getLogger(__name__)
 
@@ -22,21 +23,47 @@ UPLOAD_DIR = "static/uploads/"
 async def upload_docs(
     file: UploadFile = File(...),
     role: str = Form(...),
-    user=Depends(authenticate),
+    audit: AuditContext = Depends(get_audit_context),
 ):
+    username = audit.username
+    role = audit.role
 
     try: 
-        if not user:
+        if not username:
+            audit.emit(
+                action="document.upload",
+                resource="document.upload",
+                authorization_decision="denied",
+                result="failure",
+                outcome_status="denied",
+                query_mode="document",
+            )
             raise HTTPException(status_code=401, detail="Authentication required.")
 
         # Check if the authenticated user has the "C-Level" role before uploading documents
-        if user["role"] != "C-Level":
+        if audit.role != "C-Level":
+            audit.emit(
+                action="document.upload",
+                resource="document.upload",
+                authorization_decision="denied",
+                result="failure",
+                outcome_status="denied",
+                query_mode="document",
+            )
             raise HTTPException(status_code=403, detail="Only C-Level can upload documents.")
 
         sqlite_conn = get_sqlite_conn()
         sqlite_cur = sqlite_conn.cursor()
         sqlite_cur.execute("SELECT 1 FROM roles WHERE role_name = ?", (role,))
         if not sqlite_cur.fetchone():
+            audit.emit(
+                action="document.upload",
+                resource=f"document.upload:{role}",
+                authorization_decision="denied",
+                result="failure",
+                outcome_status="denied",
+                query_mode="document",
+            )
             raise HTTPException(status_code=400, detail="Invalid role specified.")
 
         # extract the file details
@@ -143,12 +170,28 @@ async def upload_docs(
             
             if embedded_status and embedded_status[0] == 1:
                 logger.info(f"[UPLOAD] ✅ Document {filename} confirmed embedded in vectorstore")
+                audit.emit(
+                    action="document.upload",
+                    resource=f"document.upload:{filename}",
+                    authorization_decision="allowed",
+                    result="success",
+                    outcome_status="authorized",
+                    query_mode="document",
+                )
                 return JSONResponse(content={
                     "message": f"✅ {filename} uploaded and embedded successfully for role '{role}'.",
                     "embedded": True
                 })
             else:
                 logger.warning(f"[UPLOAD] Document not marked as embedded: {filename}")
+                audit.emit(
+                    action="document.upload",
+                    resource=f"document.upload:{filename}",
+                    authorization_decision="allowed",
+                    result="success",
+                    outcome_status="authorized",
+                    query_mode="document",
+                )
                 return JSONResponse(
                     status_code=202,
                     content={
@@ -158,6 +201,14 @@ async def upload_docs(
                 )
         except Exception as embed_error:
             logger.error(f"[UPLOAD] Embedding failed for {filename}: {type(embed_error).__name__}: {str(embed_error)}", exc_info=True)
+            audit.emit(
+                action="document.upload",
+                resource=f"document.upload:{filename}",
+                authorization_decision="allowed",
+                result="failure",
+                outcome_status="failed",
+                query_mode="document",
+            )
             return JSONResponse(
                 status_code=202,
                 content={
@@ -171,6 +222,14 @@ async def upload_docs(
         raise
     except Exception as e:
         logger.error(f"[UPLOAD] Unexpected error: {type(e).__name__}: {str(e)}", exc_info=True)
+        audit.emit(
+            action="document.upload",
+            resource="document.upload",
+            authorization_decision="allowed",
+            result="failure",
+            outcome_status="failed",
+            query_mode="document",
+        )
         try:
             if 'sqlite_conn' in locals():
                 sqlite_conn.rollback()

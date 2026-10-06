@@ -54,6 +54,37 @@ class TestTextToSQLEvaluator(unittest.TestCase):
         self.assertTrue(result["valid_syntax"])
         self.assertFalse(result["valid_schema"])
 
+    def test_qualified_column_must_match_referenced_table(self):
+        evaluator = TextToSQLEvaluator({
+            "hr_data": ["employee_id", "full_name"],
+            "finance_data": ["employee_id", "salary"],
+        })
+
+        result = evaluator.evaluate("SELECT hr_data.full_name FROM finance_data hr_data")
+
+        self.assertTrue(result["valid_syntax"])
+        self.assertFalse(result["valid_schema"])
+        self.assertIn("Column 'hr_data.full_name' does not exist", " ".join(result["errors"]))
+
+    def test_unknown_table_alias_is_rejected(self):
+        result = self.evaluator.evaluate("SELECT missing.full_name FROM hr_data")
+
+        self.assertTrue(result["valid_syntax"])
+        self.assertFalse(result["valid_schema"])
+        self.assertIn("Unknown table alias 'missing'", " ".join(result["errors"]))
+
+    def test_ambiguous_unqualified_column_is_rejected(self):
+        evaluator = TextToSQLEvaluator({
+            "hr_data": ["employee_id", "full_name"],
+            "finance_data": ["employee_id", "full_name"],
+        })
+
+        result = evaluator.evaluate("SELECT full_name FROM hr_data JOIN finance_data ON hr_data.employee_id = finance_data.employee_id")
+
+        self.assertTrue(result["valid_syntax"])
+        self.assertFalse(result["valid_schema"])
+        self.assertIn("is ambiguous", " ".join(result["errors"]))
+
     def test_non_sql_statement(self):
         sql = "DROP DATABASE testdb"
         result = self.evaluator.evaluate(sql)

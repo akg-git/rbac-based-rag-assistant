@@ -52,7 +52,9 @@ Compliance Status: {compliance_status}
   - Throughput: {throughput_ops_per_sec} ops/sec
 
 - **Vector Database**:
-  - Embedding Quality: {embedding_quality_avg}
+  - Recall@K: {vector_db_recall_avg}
+  - MRR: {vector_db_mrr_avg}
+  - NDCG@K: {vector_db_ndcg_avg}
   - Average Retrieval Time: {vector_db_avg_time}s
   - Max Retrieval Time: {vector_db_max_time}s
 

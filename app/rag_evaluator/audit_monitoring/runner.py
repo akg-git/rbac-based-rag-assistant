@@ -1,8 +1,9 @@
-import os, json, pandas as pd, time
+import json, pandas as pd, time
 from pathlib import Path
 from typing import List, Dict, Tuple
 
 from app.rag_evaluator.audit_monitoring.evaluator import AuditMonitoringEvaluator
+from app.utils.audit_events import AUDIT_EVENT_LOG_PATH, load_audit_events
 
 class AuditMonitoringRunner:
     """
@@ -10,27 +11,32 @@ class AuditMonitoringRunner:
     Handles execution, persistence, and summary generation.
     """
 
-    def __init__(self, report_dir: Path = Path("app/rag_evaluator/reports")):
+    def __init__(
+        self,
+        report_dir: Path = Path("app/rag_evaluator/reports"),
+        audit_log_path: Path | str | None = None,
+    ):
         self.timestamp = time.strftime("%Y%m%d_%H%M%S")
         self.report_dir = report_dir
         self.raw_results_dir = report_dir / "raw_results"
         self.summary_dir = report_dir / "summaries"
+        self.audit_log_path = Path(
+            audit_log_path if audit_log_path is not None else AUDIT_EVENT_LOG_PATH
+        )
 
         for folder in [self.raw_results_dir, self.summary_dir]:
             folder.mkdir(parents=True, exist_ok=True)
 
         self.evaluator = AuditMonitoringEvaluator()
 
-    def run(self, events: List[Dict[str, str]]) -> Tuple[pd.DataFrame, Dict[str, float]]:
-        """
-        Args:
-            events: list of dicts with keys:
-                - user: str
-                - role: str
-                - action: str
-                - status: str ("granted" or "denied")
-        """
-        # 1. Invoke evaluator with prepared events
+    def run(
+        self,
+        events: List[Dict[str, str]] | None = None,
+    ) -> Tuple[pd.DataFrame, Dict[str, float]]:
+        """Evaluate persisted JSONL events, falling back to supplied in-memory events."""
+        if events is None:
+            events = load_audit_events(self.audit_log_path)
+
         summary_metrics = self.evaluator.evaluate(events)
 
         # 2. Add timestamp to events if missing for raw report

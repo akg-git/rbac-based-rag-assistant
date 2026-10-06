@@ -1,3 +1,4 @@
+import asyncio
 import unittest
 import tempfile
 import shutil
@@ -76,6 +77,29 @@ class TestLatencyEvaluator(unittest.TestCase):
             summary_files = list((Path(temp_dir) / "summaries").glob("*.json"))
             self.assertEqual(len(raw_files), 1)
             self.assertEqual(len(summary_files), 1)
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+    def test_runner_execution_with_async_function(self):
+        temp_dir = tempfile.mkdtemp()
+        try:
+            runner = LatencyRunner(report_dir=Path(temp_dir))
+
+            async def sample_async(value):
+                await asyncio.sleep(0.005)
+                return value * 2
+
+            functions_to_test = [
+                ("async_addition_benchmark", sample_async, [2], {}),
+            ]
+
+            df, summary = runner.run(functions_to_test, iterations=2)
+
+            self.assertEqual(len(df), 1)
+            self.assertEqual(df.iloc[0]["function"], "async_addition_benchmark")
+            self.assertEqual(df.iloc[0]["iterations"], 2)
+            self.assertGreaterEqual(summary["avg_latency"], 0.004)
+            self.assertEqual(summary["total_benchmarks"], 1)
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
 

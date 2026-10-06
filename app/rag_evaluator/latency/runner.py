@@ -1,7 +1,9 @@
-import os, json, pandas as pd, time
+import asyncio
+import json
+import time
 from pathlib import Path
 from typing import List, Dict, Tuple, Callable
-
+import pandas as pd
 from app.rag_evaluator.latency.evaluator import LatencyEvaluator
 
 class LatencyRunner:
@@ -39,7 +41,9 @@ class LatencyRunner:
             sample_times = []
             for _ in range(iterations):
                 start = time.perf_counter()
-                func(*args, **kwargs)
+                result = func(*args, **kwargs)
+                if asyncio.iscoroutine(result):
+                    result = asyncio.run(result)
                 end = time.perf_counter()
                 sample_times.append(end - start)
 

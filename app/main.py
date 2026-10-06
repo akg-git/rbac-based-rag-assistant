@@ -1,6 +1,8 @@
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 import logging
+
+from app.utils.audit_context import initialize_request_audit_context
 
 # Configure logging for production
 logging.basicConfig(
@@ -28,6 +30,16 @@ from app.routes.chat_routes import router as chat_router
 app = FastAPI()
 
 load_dotenv()
+
+
+@app.middleware("http")
+async def add_request_context(request: Request, call_next):
+    request_id, correlation_id = initialize_request_audit_context(request)
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = request_id
+    response.headers["X-Correlation-ID"] = correlation_id
+    return response
+
 
 @app.on_event("startup")
 def startup():

@@ -1,56 +1,81 @@
-# app/rag_evaluator/audit_monitoring/evaluator.py
-from typing import Dict, List, Any
+"""Pure metrics for evaluating authorization and audit event semantics."""
+
+from collections import Counter
+from typing import Any
 
 
 class AuditMonitoringEvaluator:
-    """
-    Pure metric computation module for audit and security monitoring logs.
-    Stateless and reusable.
-    """
+    """Evaluate authorization decisions without treating expected denials as breaches."""
 
-    def __init__(self, high_risk_actions: List[str] = None):
-        self.high_risk_actions = set(high_risk_actions or ["delete", "drop", "update", "delete_data", "write_data"])
+    def __init__(self, high_risk_actions: list[str] | None = None):
+        self.high_risk_actions = {
+            action.casefold() for action in (high_risk_actions or ["delete", "drop", "update"])
+        }
 
-    def evaluate(self, audit_events: List[Dict[str, Any]]) -> Dict[str, float]:
-        """
-        Input: Prepared list of audit log event dicts.
-        Output: Flat metrics dictionary.
-        """
+    @staticmethod
+    def _decision(event: dict[str, Any]) -> str:
+        decision = event.get("authorization_decision", event.get("status", ""))
+        normalized = str(decision).casefold()
+        return "allowed" if normalized == "granted" else normalized
+
+    @staticmethod
+    def _outcome_status(event: dict[str, Any]) -> str:
+        return str(event.get("outcome_status", event.get("status", ""))).casefold()
+
+    @staticmethod
+    def _user(event: dict[str, Any]) -> str:
+        return str(event.get("user_id", event.get("user", "unknown")))
+
+    def _is_high_risk_action(self, action: str) -> bool:
+        normalized = str(action).casefold()
+        return normalized in self.high_risk_actions or normalized.removesuffix("_data") in self.high_risk_actions
+
+    def evaluate(self, audit_events: list[dict[str, Any]]) -> dict[str, float]:
+        """Return authorization, policy, and suspicious-behavior metrics."""
         total = len(audit_events)
-        if total == 0:
-            return {
-                "total_events": 0.0,
-                "violations": 0.0,
-                "violation_rate": 0.0,
-                "compliance_rate": 1.0,
-                "high_risk_violations": 0.0,
-                "suspicious_users_count": 0.0,
-            }
-
-        violations = [e for e in audit_events if str(e.get("status", "")).lower() == "denied"]
-        num_violations = len(violations)
-
-        # High-risk denied attempts
-        high_risk_denials = sum(
-            1 for e in violations if str(e.get("action", "")).lower() in self.high_risk_actions
+        allowed_actions = sum(
+            1 for event in audit_events if self._decision(event) == "allowed"
+        )
+        denied_actions = sum(
+            1 for event in audit_events if self._decision(event) == "denied"
+        )
+        violations = [
+            event
+            for event in audit_events
+            if self._outcome_status(event) in {"unauthorized", "policy_breach"}
+        ]
+        high_risk_violations = sum(
+            1
+            for event in violations
+            if self._is_high_risk_action(str(event.get("action", "")))
         )
 
-        # Flag repeated violation users (users with > 1 denial in batch)
-        user_denial_counts: Dict[str, int] = {}
-        for e in violations:
-            user = e.get("user", "unknown")
-            user_denial_counts[user] = user_denial_counts.get(user, 0) + 1
-        
-        suspicious_users = sum(1 for count in user_denial_counts.values() if count > 1)
+        outcome_counts = Counter(self._user(event) for event in audit_events)
+        failed_outcome_counts = Counter(
+            self._user(event)
+            for event in audit_events
+            if self._outcome_status(event) == "failed"
+        )
+        suspicious_users = {
+            user
+            for user in outcome_counts
+            if any(
+                self._user(event) == user
+                and self._outcome_status(event) in {"unauthorized", "policy_breach"}
+                for event in audit_events
+            )
+            or failed_outcome_counts[user] > 1
+        }
 
-        violation_rate = num_violations / total
+        violation_rate = len(violations) / total if total else 0.0
         compliance_rate = 1.0 - violation_rate
-
         return {
             "total_events": float(total),
-            "violations": float(num_violations),
+            "allowed_actions": float(allowed_actions),
+            "denied_actions": float(denied_actions),
+            "violations": float(len(violations)),
             "violation_rate": round(violation_rate, 4),
             "compliance_rate": round(compliance_rate, 4),
-            "high_risk_violations": float(high_risk_denials),
-            "suspicious_users_count": float(suspicious_users),
+            "high_risk_violations": float(high_risk_violations),
+            "suspicious_users_count": float(len(suspicious_users)),
         }
