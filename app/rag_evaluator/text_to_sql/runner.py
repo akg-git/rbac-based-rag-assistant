@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import List, Dict, Tuple, Optional
 
 from app.rag_evaluator.text_to_sql.evaluator import TextToSQLEvaluator
-from app.utils.sql_query import translate_nl_to_sql, get_allowed_tables_for_role
+from app.utils.sql_query import generate_sql_with_retry, get_allowed_tables_for_role
 
 logger = logging.getLogger(__name__)
 
@@ -62,13 +62,25 @@ class TextToSQLRunner:
         for item in sql_dataset:
             question = item.get("question", item.get("query", ""))
             role = item.get("role", "general")
+            source = str(item.get("source", "")).strip().lower()
 
             if not question:
                 logger.warning("Skipping text-to-SQL row without question/query key: %s", item)
                 continue
 
             allowed_tables = get_allowed_tables_for_role(role)
-            sql = translate_nl_to_sql(question, allowed_tables)
+
+            # Skip unstructured documents (.md, .txt) that have no mapped database tables
+            if not allowed_tables and (source.endswith(".md") or source.endswith(".txt")):
+                logger.info("Skipping unstructured document source '%s' (role '%s') from SQL evaluation", source, role)
+                continue
+
+            # If a role has no database tables at all, skip non-SQL evaluations
+            if not allowed_tables:
+                logger.info("Skipping text-to-SQL evaluation for role '%s' with no allowed tables: %s", role, question)
+                continue
+
+            sql, valid, _, _ = generate_sql_with_retry(question, allowed_tables)
 
             if not sql or sql.strip() == "INVALID_QUERY":
                 logger.warning("Failed text-to-SQL generation for question: %s", question)
@@ -76,7 +88,7 @@ class TextToSQLRunner:
                     "valid_syntax": False,
                     "valid_schema": False,
                     "is_read_only": True,
-                    "errors": ["Failed to generate valid SQL query"]
+                    "errors": ["Failed to generate valid SQL query after retries"]
                 }
                 sql = "INVALID_QUERY"
             else:

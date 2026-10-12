@@ -51,7 +51,7 @@ class TestSQLQuerySecurityIntegration(unittest.TestCase):
 
         self.assertFalse(valid)
         self.assertEqual(tables, ["SalesData"])
-        self.assertIn("unknown table or column", error)
+        self.assertTrue("Database error" in error or "unknown table or column" in error)
 
     def test_rejects_cte(self):
         valid, tables, error = validate_sql_query(

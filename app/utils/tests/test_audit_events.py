@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from app.utils.audit_events import create_audit_event, write_audit_event
+from app.utils.audit_events import AUDIT_EVENT_FIELDS, create_audit_event, write_audit_event
 
 
 class TestAuditEventProducer(unittest.TestCase):
@@ -23,21 +23,8 @@ class TestAuditEventProducer(unittest.TestCase):
             timestamp="2026-10-06T00:00:00Z",
         )
 
-        fields = (
-            "event_id",
-            "timestamp",
-            "user_id",
-            "role",
-            "request_id",
-            "action",
-            "resource",
-            "authorization_decision",
-            "result",
-            "outcome_status",
-            "correlation_id",
-        )
         canonical = json.dumps(
-            {field: event[field] for field in fields},
+            {field: event[field] for field in AUDIT_EVENT_FIELDS},
             sort_keys=True,
             separators=(",", ":"),
         ).encode("utf-8")

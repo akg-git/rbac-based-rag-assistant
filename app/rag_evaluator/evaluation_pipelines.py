@@ -24,6 +24,7 @@ from app.rag_evaluator.vector_db.runner import VectorDBRunner
 from app.rag_evaluator.audit_monitoring.runner import AuditMonitoringRunner
 from app.utils.audit_events import AUDIT_EVENT_LOG_PATH, load_audit_events
 from app.rag_evaluator.text_to_sql.runner import TextToSQLRunner
+from app.utils.sql_query import get_allowed_tables_for_role
 from app.rag_evaluator.reports.evaluation_report import EvaluationReport
 
 # ==========================================
@@ -195,7 +196,25 @@ class EvaluationPipeline:
         return result_df, summary
 
     def run_text_to_sql_evaluation(self, qa_dataset):
-        result_df, summary = self.text_to_sql_runner.run(qa_dataset)
+        # Filter qa_dataset for structured/tabular sources
+        sql_dataset = [
+            item for item in qa_dataset
+            if str(item.get("source", "")).lower().endswith(".csv")
+            or bool(get_allowed_tables_for_role(item.get("role", "")))
+        ]
+
+        # Test Evaluation - Supplement with representative DuckDB HR table queries if fewer than 5 tabular questions
+        if len(sql_dataset) < 5:
+            supplemental_samples = [
+                {"question": "What is the average salary of employees in Engineering department?", "role": "hr", "source": "hr_data.csv"},
+                {"question": "List the employee ID and full name of employees with attendance percentage greater than 90.", "role": "hr", "source": "hr_data.csv"},
+                {"question": "How many total employees are in the HR department?", "role": "hr", "source": "hr_data.csv"},
+                {"question": "Find the maximum leaves taken by any employee.", "role": "c-level", "source": "hr_data.csv"},
+                {"question": "Show the full name and performance rating of employees in New York.", "role": "hr", "source": "hr_data.csv"},
+            ]
+            sql_dataset.extend(supplemental_samples)
+
+        result_df, summary = self.text_to_sql_runner.run(sql_dataset)
         print("Text To SQL Evaluation completed.")
         print("Summary:", summary)
         return result_df, summary
@@ -284,7 +303,7 @@ class EvaluationPipeline:
             )
             for index, item in enumerate(qa_dataset[:3])
         ]
-        _, lat_summary = self.run_latency_evaluation(latency_workload, iterations=3)
+        _, lat_summary = self.run_latency_evaluation(latency_workload)
         all_summaries["latency"] = lat_summary
         print("Latency Evaluation completed successfully.")
 

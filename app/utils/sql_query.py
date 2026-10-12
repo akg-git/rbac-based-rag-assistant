@@ -7,9 +7,17 @@ import tabulate
 from groq import Groq
 from sqlparse.sql import Function, Identifier, IdentifierList, Parenthesis
 from sqlparse.tokens import DML, Keyword, Newline, Whitespace
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential_jitter,
+    before_sleep_log,
+)
 
 from app.schemas.duckdb import get_duckdb_conn, get_duckdb_schema
 from app.utils.audit_events import emit_audit_event
+from app.utils.response_cache import sql_response_cache
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -18,10 +26,11 @@ client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 logger = logging.getLogger(__name__)
 
 
-def get_allowed_tables_for_role(role: str) -> list[str]:
+def get_allowed_tables_for_role(role: str, conn=None) -> list[str]:
     """Return physical tables authorized for a role."""
     normalized_role = role.casefold()
-    conn = get_duckdb_conn(read_only=True)
+    owns_connection = conn is None
+    conn = conn or get_duckdb_conn(read_only=True)
     try:
         if normalized_role == "c-level":
             query = """
@@ -43,10 +52,32 @@ def get_allowed_tables_for_role(role: str) -> list[str]:
         logger.error(f"[RBAC] Error retrieving allowed tables for role '{role}': {e}", exc_info=True)
         return []
     finally:
-        conn.close()
+        if owns_connection:
+            conn.close()
 
 
-def translate_nl_to_sql(question: str, allowed_tables: list[str], conn=None) -> str:
+def _call_groq_with_backoff(model_name: str, prompt: str) -> str:
+    """Invoke Groq with exponential-jitter backoff on rate-limit (429) errors."""
+
+    @retry(
+        retry=retry_if_exception_type(Exception),
+        wait=wait_exponential_jitter(initial=2, max=60, jitter=3),
+        stop=stop_after_attempt(4),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
+        reraise=True,
+    )
+    def _invoke() -> str:
+        response = client.chat.completions.create(
+            model=model_name,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0,
+        )
+        return response.choices[0].message.content.strip()
+
+    return _invoke()
+
+
+def translate_nl_to_sql(question: str, allowed_tables: list[str], conn=None, error_feedback: str = "") -> str:
     """Generate DuckDB SQL using only catalog metadata for allowed tables."""
     owns_connection = conn is None
     conn = conn or get_duckdb_conn(read_only=True)
@@ -56,35 +87,107 @@ def translate_nl_to_sql(question: str, allowed_tables: list[str], conn=None) -> 
             f"Table Name: {table_name}\nColumns: {', '.join(columns)}"
             for table_name, columns in schema.items()
         )
-        prompt = f"""
-        You are an expert DuckDB query generation assistant.
+        prompt = f"""You are an expert DuckDB query generation assistant.
 
-        Convert the natural language question into one safe DuckDB SELECT query.
+Convert the natural language question into one safe DuckDB SELECT query.
 
-        Database Schema:
-        {schema_block}
+Database Schema:
+{schema_block}
 
-        Rules:
-        1. Generate one SELECT query only.
-        2. Use only the tables and columns in the schema.
-        3. Never generate INSERT, UPDATE, DELETE, DROP, ALTER, CREATE, COPY,
-           PRAGMA, ATTACH, INSTALL, LOAD, table functions, or subqueries.
-        4. Return only raw SQL without markdown, explanations, or comments.
-        5. Return exactly INVALID_QUERY if generation is impossible.
+Rules:
+1. Generate one SELECT query only.
+2. Use only the tables and columns in the schema.
+3. Never generate INSERT, UPDATE, DELETE, DROP, ALTER, CREATE, COPY,
+   PRAGMA, ATTACH, INSTALL, LOAD, table functions, or subqueries.
+4. Return only raw SQL without markdown (no ```sql tags), explanations, or comments. Example: SELECT * FROM table;
+5. Return exactly INVALID_QUERY if generation is impossible.
 
-        Natural Language Question: {question}
+Natural Language Question: {question}"""
 
-        SQL:
-        """
-        response = client.chat.completions.create(
-            model="gpt-oss-20b",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0,
-        )
-        return response.choices[0].message.content.strip()
+        if error_feedback:
+            prompt += f"\n\n{error_feedback}"
+
+        prompt += "\n\nSQL:\n"
+
+        model_name = os.getenv("GROQ_MODEL", "llama3-70b-8192")
+        raw_sql = _call_groq_with_backoff(model_name, prompt)
+
+        if raw_sql.startswith("```sql"):
+            raw_sql = raw_sql[6:].strip()
+        elif raw_sql.startswith("```"):
+            raw_sql = raw_sql[3:].strip()
+        if raw_sql.endswith("```"):
+            raw_sql = raw_sql[:-3].strip()
+
+        return raw_sql.strip()
     except Exception as exc:
         logger.error("SQL generation failed: %s", type(exc).__name__)
         return "INVALID_QUERY"
+    finally:
+        if owns_connection:
+            conn.close()
+
+
+def generate_sql_with_retry(
+    question: str,
+    allowed_tables: list[str],
+    conn=None,
+    max_retries: int = 3,
+) -> tuple[str, bool, list[str], str]:
+    """
+    Generate and validate SQL with self-correction retries.
+
+    Returns:
+        (sql, valid, referenced_tables, validation_error)
+        - sql: final generated SQL (may be "INVALID_QUERY" or empty on total failure)
+        - valid: True only if the SQL passed all validation checks
+        - referenced_tables: tables parsed from the SQL
+        - validation_error: last error message, empty string on success
+    """
+    from app.schemas.duckdb import get_duckdb_conn as _get_conn
+    owns_connection = conn is None
+    conn = conn or _get_conn()
+    try:
+        # ── Cache lookup ───────────────────────────────────────────────
+        role_key = ",".join(sorted(allowed_tables))
+        cached = sql_response_cache.get(question, role_key)
+        if cached is not None:
+            logger.info("[SQL] Cache hit — skipping LLM call.")
+            cached_sql, cached_valid, cached_tables, cached_err = cached
+            return cached_sql, cached_valid, cached_tables, cached_err
+
+        sql = ""
+        valid = False
+        referenced_tables: list[str] = []
+        validation_error = ""
+        error_feedback = ""
+
+        for attempt in range(max_retries):
+            sql = translate_nl_to_sql(question, allowed_tables, conn, error_feedback)
+            if not sql or sql.strip() == "INVALID_QUERY":
+                break
+
+            valid, referenced_tables, validation_error = validate_sql_query(
+                sql, allowed_tables, conn
+            )
+            if valid:
+                break
+
+            error_feedback = (
+                f"Previous SQL attempt:\n{sql}\n"
+                f"Failed with error: {validation_error}\n"
+                f"Please correct the SQL query to resolve this error."
+            )
+            logger.warning(
+                "[SQL] Retry %d/%d — validation failed: %s", attempt + 1, max_retries, validation_error
+            )
+
+        # ── Cache store on success ─────────────────────────────────────
+        if valid:
+            sql_response_cache.set((sql, valid, referenced_tables, validation_error), question, role_key)
+            logger.info("[SQL] Result cached for future identical queries.")
+
+        return sql, valid, referenced_tables, validation_error
     finally:
         if owns_connection:
             conn.close()
@@ -162,8 +265,8 @@ def validate_sql_query(sql: str, allowed_tables: list[str], conn=None) -> tuple[
     conn = conn or get_duckdb_conn(read_only=True)
     try:
         conn.execute(f"EXPLAIN {sql}")
-    except Exception:
-        return False, referenced_tables, "Query references an unknown table or column."
+    except Exception as e:
+        return False, referenced_tables, f"Database error: {str(e)}"
     finally:
         if owns_connection:
             conn.close()
@@ -225,7 +328,7 @@ def handle_sql_query(
 
     try:
         logger.info("[SQL] User=%s, Role=%s, Event=query_started", username, role)
-        allowed_tables = get_allowed_tables_for_role(role)
+        allowed_tables = get_allowed_tables_for_role(role, conn)
         if not allowed_tables:
             _emit_sql_audit_event(
                 username=username,
@@ -249,8 +352,30 @@ def handle_sql_query(
                 "error_type": "authorization",
             }
 
-        sql = translate_nl_to_sql(question, allowed_tables, conn)
-        if sql.strip() == "INVALID_QUERY":
+        MAX_RETRIES = 3
+        sql = ""
+        valid = False
+        referenced_tables = []
+        validation_error = ""
+        error_feedback = ""
+        
+        for attempt in range(MAX_RETRIES):
+            sql = translate_nl_to_sql(question, allowed_tables, conn, error_feedback)
+            if sql.strip() == "INVALID_QUERY":
+                break
+                
+            valid, referenced_tables, validation_error = validate_sql_query(
+                sql,
+                allowed_tables,
+                conn,
+            )
+            
+            if valid:
+                break
+                
+            error_feedback = f"Previous SQL attempt:\n{sql}\nFailed with error: {validation_error}\nPlease correct the SQL query to resolve this error."
+            
+        if not sql or sql.strip() == "INVALID_QUERY":
             _emit_sql_audit_event(
                 username=username,
                 role=role,
@@ -268,11 +393,6 @@ def handle_sql_query(
                 "error_type": "validation",
             }
 
-        valid, referenced_tables, validation_error = validate_sql_query(
-            sql,
-            allowed_tables,
-            conn,
-        )
         if not valid:
             is_unauthorized_table = any(
                 table.casefold() not in {allowed.casefold() for allowed in allowed_tables}

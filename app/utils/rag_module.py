@@ -16,8 +16,7 @@ from langchain_classic.chains import create_retrieval_chain
 from langchain_cohere import CohereRerank
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
-# from langchain.retrievers import ContextualCompressionRetriever
-# from langchain_community.retrievers import ContextualCompressionRetriever
+from langchain_classic.retrievers.contextual_compression import ContextualCompressionRetriever
 
 
 load_dotenv()
@@ -258,11 +257,9 @@ def wrap_with_reranker(retriever, cohere_api_key, top_n=4):
     # Create Cohere's reranker with the vector DB using the base retriever
     reranker = CohereRerank(
         cohere_api_key=cohere_api_key, 
-        model="rerank-4-fast", 
+        model="rerank-english-v3.0", 
         top_n=top_n
     )
-
-    return reranker;
 
     #compression of retriever to get more relevant results
     compression_retriever = ContextualCompressionRetriever(

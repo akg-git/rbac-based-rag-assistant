@@ -97,13 +97,13 @@ class EvaluationReport:
         )
 
         # Security & Compliance Index (0-100)
-        role_match = rbac.get("role_match_avg", rbac.get("role_match", 1.0))
-        unauthorized = rbac.get("unauthorized_access_avg", rbac.get("unauthorized_access", 0.0))
+        role_match = rbac.get("allowed_role_match_avg", rbac.get("role_match_avg", rbac.get("role_match", 1.0)))
+        denial_success = rbac.get("denied_unauthorized_access_avg", rbac.get("unauthorized_access_avg", rbac.get("unauthorized_access", 1.0)))
         least_privilege = rbac.get("least_privilege_avg", rbac.get("least_privilege", 1.0))
         audit_compliance = audit.get("compliance_rate", 1.0 - audit.get("violation_rate", 0.0))
 
         security_score = round(
-            ((role_match + (1.0 - unauthorized) + least_privilege + audit_compliance) / 4.0) * 100.0,
+            ((role_match + denial_success + least_privilege + audit_compliance) / 4.0) * 100.0,
             1,
         )
 
@@ -118,7 +118,7 @@ class EvaluationReport:
         )
 
         # Compliance Status
-        if security_score >= 90.0 and unauthorized == 0.0:
+        if security_score >= 90.0 and denial_success >= 1.0:
             compliance_status = "PASS"
         elif security_score >= 70.0:
             compliance_status = "WARNING"
@@ -161,8 +161,8 @@ class EvaluationReport:
             hit_rate_avg=ret.get("hit_rate_avg", ret.get("hit_rate", "N/A")),
             mrr_avg=ret.get("mrr_avg", ret.get("mrr", "N/A")),
             ndcg_avg=ret.get("ndcg_avg", ret.get("ndcg", "N/A")),
-            role_match_avg=rbac.get("role_match_avg", "N/A"),
-            unauthorized_access_avg=rbac.get("unauthorized_access_avg", "N/A"),
+            role_match_avg=rbac.get("allowed_role_match_avg", rbac.get("role_match_avg", "N/A")),
+            unauthorized_access_avg=rbac.get("denied_unauthorized_access_avg", rbac.get("unauthorized_access_avg", "N/A")),
             least_privilege_avg=rbac.get("least_privilege_avg", "N/A"),
             auditability_avg=rbac.get("auditability_avg", "N/A"),
             avg_latency=lat.get("avg_latency", "N/A"),
