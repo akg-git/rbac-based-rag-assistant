@@ -1,0 +1,57 @@
+{
+  "dataset_version": "1.0",
+  "documents": [
+    {
+      "source": "marketing_report_2024.md",
+      "role": "marketing",
+      "description": "Annual marketing performance and strategy report"
+    },
+    {
+      "source": "market_report_q4_2024.md",
+      "role": "marketing",
+      "description": "Q4 2024 marketing performance and campaign report"
+    },
+    {
+      "source": "engineering_master_doc.md",
+      "role": "engineering",
+      "description": "Engineering architecture and delivery guidance"
+    },
+    {
+      "source": "financial_summary.md",
+      "role": "finance",
+      "description": "Financial performance summary"
+    }
+  ],
+  "queries": [
+    {
+      "query": "What revenue and customer acquisition targets were set for Q4 2024?",
+      "expected_sources": ["market_report_q4_2024.md"],
+      "role": "marketing"
+    },
+    {
+      "query": "What were the main marketing campaigns and customer retention initiatives in Q4 2024?",
+      "expected_sources": ["market_report_q4_2024.md"],
+      "role": "marketing"
+    },
+    {
+      "query": "How did the Q4 2024 marketing campaign measure ROI and conversion performance?",
+      "expected_sources": ["market_report_q4_2024.md"],
+      "role": "marketing"
+    },
+    {
+      "query": "What architecture and delivery principles should engineering teams follow?",
+      "expected_sources": ["engineering_master_doc.md"],
+      "role": "engineering"
+    },
+    {
+      "query": "What financial figures and performance highlights are included in the financial summary?",
+      "expected_sources": ["financial_summary.md"],
+      "role": "finance"
+    },
+    {
+      "query": "What annual marketing results and strategic priorities are described?",
+      "expected_sources": ["marketing_report_2024.md"],
+      "role": "marketing"
+    }
+  ]
+}

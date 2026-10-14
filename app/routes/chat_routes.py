@@ -1,11 +1,11 @@
 # Chat Routes
 
 from fastapi import APIRouter, Depends, HTTPException
-from app.authentication.auth import authenticate
 from app.models.request_model import ChatRequest
 from app.utils.query_classifier import detect_query_mode
 from app.utils.sql_query import handle_sql_query
 from app.utils.rag_chain import rag_handler
+from app.utils.audit_context import AuditContext, get_audit_context
 import logging
 
 logger = logging.getLogger(__name__)
@@ -13,14 +13,17 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 @router.post("/chat")
-async def chat_endpoint(request: ChatRequest, user = Depends(authenticate)):
+async def chat_endpoint(
+    request: ChatRequest,
+    audit: AuditContext = Depends(get_audit_context),
+):
     """
     Routes to SQL or RAG based on query classification with fallback strategy.
     """
     
     try:
-        role = user["role"]
-        username = user["username"]
+        role = audit.role
+        username = audit.username
         question = request.question.strip() if request.question else ""
         
         # Validate input
@@ -28,11 +31,14 @@ async def chat_endpoint(request: ChatRequest, user = Depends(authenticate)):
             raise HTTPException(status_code=400, detail="Question cannot be empty")
         
         logger.info(f"[CHAT] User={username}, Role={role}, Question={question[:50]}...")
-        
+
+        request_id = audit.request_id
+        correlation_id = audit.correlation_id
+
         # Detect query mode
         mode = detect_query_mode(question)
         logger.info(f"[CHAT] Detected mode: {mode}")
-        
+
         result = {}
         fallback_used = False
         sql_query = None
@@ -40,10 +46,22 @@ async def chat_endpoint(request: ChatRequest, user = Depends(authenticate)):
         # Route to appropriate handler
         if mode == "SQL":
             try:
-                result = handle_sql_query(question, role, username, return_sql=True)
+                result = handle_sql_query(
+                    question,
+                    role,
+                    username,
+                    return_sql=True,
+                    request_id=request_id,
+                    correlation_id=correlation_id,
+                )
                 
                 # Check if SQL execution failed
                 if result.get("error"):
+                    if result.get("error_type") == "authorization":
+                        raise HTTPException(
+                            status_code=403,
+                            detail="You are not authorized to access the requested data.",
+                        )
                     logger.warning(f"[CHAT] SQL query failed: {result.get('answer')}")
                     raise ValueError(result.get("answer", "SQL query execution failed"))
                 
@@ -55,16 +73,30 @@ async def chat_endpoint(request: ChatRequest, user = Depends(authenticate)):
                 sql_query = result.get("sql")
                 logger.info(f"[CHAT] SQL mode succeeded")
                 
+            except HTTPException:
+                raise
             except Exception as e:
                 logger.warning(f"[CHAT] SQL fallback triggered: {str(e)}")
                 # Fallback to RAG
-                result = await rag_handler(question, role)
+                result = await rag_handler(
+                    question,
+                    role,
+                    username=username,
+                    request_id=request_id,
+                    correlation_id=correlation_id,
+                )
                 fallback_used = True
                 mode = "SQL → RAG Fallback"
         else:
             # Direct RAG mode
-            result = await rag_handler(question, role)
-        
+            result = await rag_handler(
+                question,
+                role,
+                username=username,
+                request_id=request_id,
+                correlation_id=correlation_id,
+            )
+
         # Validate result structure
         if not result or "answer" not in result:
             logger.error(f"[CHAT] Invalid result structure: {result}")

@@ -29,6 +29,8 @@ if "delete_confirm" not in st.session_state:
     st.session_state.delete_confirm = False
 if "delete_user_data" not in st.session_state:
     st.session_state.delete_user_data = {"username": "", "role": ""}
+if "login_error" not in st.session_state:
+    st.session_state.login_error = None
 
 # st.session_state.auth = (username, password) if st.session_state.auth else None
 
@@ -51,6 +53,7 @@ if not st.session_state.logged_in:
             st.rerun()
 
         else:
+            st.error(auth_response.get("message", "Login failed. Please try again."))
             st.rerun()
 
 if st.session_state.page == "main" and st.session_state.logged_in:

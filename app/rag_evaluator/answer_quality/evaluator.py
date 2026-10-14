@@ -1,0 +1,236 @@
+# evaluator.py
+try:
+    from ragas.metrics.collections import Faithfulness, ContextRelevance, AnswerRelevancy, AnswerAccuracy
+    from ragas import evaluate
+except ImportError:  # pragma: no cover - exercised when optional deps are missing
+    Faithfulness = ContextRelevance = AnswerRelevancy = AnswerAccuracy = None
+    evaluate = None
+
+try:
+    from sentence_transformers import SentenceTransformer, util
+except ImportError:  # pragma: no cover - exercised when optional deps are missing
+    SentenceTransformer = None
+    util = None
+
+try:
+    from groq import Groq
+except ImportError:  # pragma: no cover - exercised when optional deps are missing
+    Groq = None
+
+import os, json, logging, re
+from typing import Dict
+from dotenv import load_dotenv
+
+load_dotenv()
+
+logger = logging.getLogger(__name__)
+
+# Define required metrics and their valid range
+REQUIRED_METRICS = {"Faithfulness", "Relevance", "Completeness", "Clarity"}
+VALID_SCORE_RANGE = (0.0, 1.0)
+
+
+def _safe_json_loads(raw_output: str):
+    """Best-effort JSON extraction for model responses wrapped in prose or fences."""
+    try:
+        return json.loads(raw_output)
+    except json.JSONDecodeError:
+        match = re.search(r"(\{.*\}|\[.*\])", raw_output, re.DOTALL)
+        if match:
+            try:
+                return json.loads(match.group(1))
+            except json.JSONDecodeError:
+                pass
+        return None
+
+class AnswerQualityEvaluator:
+    def __init__(self, embedding_model="sentence-transformers/all-MiniLM-L6-v2", model_name=None):
+        self.embedding_model_name = embedding_model
+        self.model_name = model_name or os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+        self._embedder = None
+        self._groq_client = None
+
+    # Embedding Model for similarity
+    @property
+    def embedder(self):
+        if self._embedder is None and SentenceTransformer is not None:
+            self._embedder = SentenceTransformer(self.embedding_model_name)
+        return self._embedder
+
+    #Groq Client for LLM evaluation
+    @property
+    def groq_client(self):
+        if self._groq_client is None and Groq is not None:
+            groq_api_key = os.getenv("GROQ_API_KEY")
+            self._groq_client = Groq(api_key=groq_api_key)
+        return self._groq_client
+
+    def embedding_similarity(self, generated_answer: str, reference_answer: str) -> float:
+        """Compute cosine similarity between generated and reference answers."""
+        if not generated_answer or not reference_answer or str(generated_answer).startswith("Error"):
+            return 0.0
+        if self.embedder is None or util is None:
+            return 0.0
+
+        emb1 = self.embedder.encode(generated_answer, convert_to_tensor=True)
+        emb2 = self.embedder.encode(reference_answer, convert_to_tensor=True)
+        return float(util.cos_sim(emb1, emb2).item())
+
+    def _validate_and_convert_scores(self, scores: dict) -> Dict[str, float]:
+        """
+        Validate and convert scores to float with range checking.
+        
+        Args:
+            scores: Dictionary of metric scores
+            
+        Returns:
+            Dictionary with validated float scores
+            
+        Raises:
+            ValueError: If scores are invalid or out of range
+        """
+        validated = {}
+        
+        for metric in REQUIRED_METRICS:
+            if metric not in scores:
+                metric = metric.lower()
+                logger.warning(f"Missing metric: {metric}. Using default 0.0")
+                validated[metric] = 0.0
+                continue
+            
+            try:
+                # Convert to float explicitly
+                value = float(scores[metric])
+            except (TypeError, ValueError) as e:
+                logger.error(f"Cannot convert {metric}={scores[metric]} to float: {e}")
+                raise ValueError(f"Invalid score for {metric}: {scores[metric]}") from e
+            
+            # Validate range
+            if not (VALID_SCORE_RANGE[0] <= value <= VALID_SCORE_RANGE[1]):
+                logger.warning(f"{metric}={value} out of range [0.0, 1.0]. Clamping to valid range.")
+                value = max(VALID_SCORE_RANGE[0], min(VALID_SCORE_RANGE[1], value))
+            
+            validated[metric] = value
+        
+        return validated
+
+    def llm_judge(self, query: str, context: str, answer: str, reference_answer: str = None) -> Dict[str, float]:
+        """Use Groq LLM to rate answer quality on multiple dimensions."""
+        if self.groq_client is None:
+            return {metric: 0.5 for metric in REQUIRED_METRICS}
+
+        # Reference Answer helps in Ground Truth evaluation
+        ref_clause = f"\nGround Truth Reference Answer: {reference_answer}" if reference_answer else ""
+        prompt = f"""You are an evaluator for a RAG system.
+
+        Evaluate the predicted answer to a question using the retrieved context and compare it to the ground truth reference answer (if provided).
+
+        Return a JSON object with the following keys and value must be float between 0.0 and 1.0:
+        - "Faithfulness": Is the predicted answer grounded in the retrieved context without hallucination?
+        - "Relevance": Is the answer directly relevant to the query?
+        - "Clarity": How clear and understandable is the answer?
+        - "Completeness": Does the answer fully address the question comparing with the retrieved context and reference answer?
+
+        Query: {query}
+        Context: {context}{ref_clause}
+        Predicted Answer: {answer}
+
+        Provide scores ONLY in valid JSON like:
+        {{
+        "Faithfulness": 1.0,
+        "Relevance": 0.8,
+        "Completeness": 0.9,
+        "Clarity": 0.7
+        }}
+        """
+        try:
+            response = self.groq_client.chat.completions.create(
+                model=self.model_name,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            
+            raw_output = response.choices[0].message.content.strip()
+            cleaned_output = raw_output
+
+            if cleaned_output.startswith("```"):
+                cleaned_output = cleaned_output.strip("`")
+                if cleaned_output.lower().startswith("json"):
+                    cleaned_output = cleaned_output[4:].strip()
+
+            cleaned_output = cleaned_output.strip()
+
+            scores = _safe_json_loads(cleaned_output)
+            if scores is None:
+                logger.warning("JSON parsing failed. Raw output: %s", raw_output)
+                scores = {metric: 0.5 for metric in REQUIRED_METRICS}
+
+            if isinstance(scores, list) and scores and isinstance(scores[0], dict):
+                scores = scores[0]
+
+            if isinstance(scores, dict):
+                normalized_scores = {}
+                for metric in REQUIRED_METRICS:
+                    value = scores.get(metric)
+                    if value is None:
+                        value = scores.get(metric.lower())
+                    if value is None:
+                        logger.warning(f"Missing metric: {metric}. Using default 0.5")
+                        normalized_scores[metric] = 0.5
+                    else:
+                        normalized_scores[metric] = value
+                scores = normalized_scores
+
+            else:
+                logger.warning(f"LLM response was not a JSON object, got {type(scores).__name__}; using default scores")
+                scores = {metric: 0.5 for metric in REQUIRED_METRICS}
+            
+            # Validate and convert all scores to float
+            validated_scores = self._validate_and_convert_scores(scores)
+            return validated_scores
+            
+        except Exception as e:
+            logger.error(f"Error in llm_judge: {e}")
+            # Fallback: return neutral scores
+            return {metric: 0.5 for metric in REQUIRED_METRICS}
+
+    def ragas_evaluation(self, dataset):
+        """Run RAGAS evaluation on dataset (queries, contexts, answers)."""
+        if evaluate is None or any(metric is None for metric in [Faithfulness, ContextRelevance, AnswerRelevancy, AnswerAccuracy]):
+            return {"status": "unavailable", "reason": "ragas is not installed"}
+
+        result = evaluate(dataset, metrics=[
+            # faithfulness, answer_relevancy, context_relevancy, answer_similarity
+            Faithfulness, ContextRelevance, AnswerRelevancy, AnswerAccuracy
+        ])
+        return result
+
+    def evaluate_answer(self, query, context, generated_answer, reference_answer=None) -> Dict[str, float]:
+        """Main entry point for evaluation pipeline."""
+        results = {}
+
+        embedding_score = None
+        # Embedding similarity if reference available
+        if reference_answer:
+            embedding_score = self.embedding_similarity(
+                generated_answer, reference_answer
+            )
+
+        # LLM judge scoring
+        llm_scores = self.llm_judge(
+            query=query,
+            context=context,
+            answer=generated_answer,
+            reference_answer=reference_answer
+        )
+
+        results = {
+            "faithfulness": llm_scores.get("Faithfulness", 0.0),
+            "relevance": llm_scores.get("Relevance", 0.0),
+            "completeness": llm_scores.get("Completeness", 0.0),
+            "clarity": llm_scores.get("Clarity", 0.0),
+            "embedding_similarity": embedding_score
+            if embedding_score is not None
+            else 0.0
+        }
+
+        return results

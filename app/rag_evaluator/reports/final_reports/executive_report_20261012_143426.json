@@ -1,0 +1,72 @@
+{
+    "timestamp": "20261012_143426",
+    "evaluation_indices": {
+        "overall_score": 68.2,
+        "security_score": 95.0,
+        "quality_score": 77.9,
+        "performance_score": 11.8,
+        "compliance_status": "PASS"
+    },
+    "domain_summaries": {
+        "answer_quality": {
+            "samples": 10,
+            "faithfulness_avg": 0.83,
+            "relevance_avg": 0.86,
+            "clarity_avg": 0.93,
+            "completeness_avg": 0.665,
+            "embedding_similarity_avg": 0.317
+        },
+        "retrieval": {
+            "samples": 10,
+            "precision_avg": 0.625,
+            "recall_avg": 0.75,
+            "hit_rate_avg": 0.9,
+            "mrr_avg": 0.783,
+            "ndcg_avg": 0.801
+        },
+        "rbac_security": {
+            "samples": 10,
+            "total_rows": 20,
+            "allowed_role_match_avg": 0.9,
+            "allowed_compliance_score_avg": 0.9,
+            "denied_unauthorized_access_avg": 1.0,
+            "least_privilege_avg": 0.9,
+            "auditability_avg": 1.0
+        },
+        "latency": {
+            "avg_latency": 1.763975,
+            "p50_latency": 0.001152,
+            "p95_latency": 8.950051,
+            "p99_latency": 9.581919,
+            "min_latency": 0.000865,
+            "max_latency": 9.739886,
+            "throughput_ops_per_sec": 0.57,
+            "total_benchmarks": 3
+        },
+        "vector_db": {
+            "samples": 6,
+            "recall_at_k_avg": 1.0,
+            "mrr_avg": 1.0,
+            "ndcg_at_k_avg": 1.0,
+            "avg_retrieval_time_avg": 0.012357
+        },
+        "text_to_sql": {
+            "samples": 10,
+            "syntax_valid_rate": 0.1,
+            "schema_valid_rate": 0.1,
+            "read_only_rate": 1.0,
+            "error_count": 9
+        },
+        "audit_monitoring": {
+            "total_events": 32.0,
+            "allowed_actions": 31.0,
+            "denied_actions": 1.0,
+            "violations": 0.0,
+            "violation_rate": 0.0,
+            "compliance_rate": 1.0,
+            "high_risk_violations": 0.0,
+            "suspicious_users_count": 0.0
+        }
+    },
+    "executive_summary_markdown": "# Executive Evaluation Report  \n**Multi\u2011Tenant, RBAC\u2011Based Retrieval\u2011Augmented Generation (RAG) System**  \n*Prepared for Engineering Leaders & Compliance Officers*  \n\n---  \n\n## 1. Executive Overview  \n- **Readiness Verdict:** **Not yet enterprise\u2011ready**.  \n- Overall Readiness Score: **68.2\u202f%** (below typical enterprise threshold of\u202f\u2265\u202f80\u202f%).  \n- Compliance Status: **PASS** (audit logs show zero recorded violations), but **critical security and performance gaps** undermine confidence in production deployment.  \n\n---  \n\n## 2. Key Findings by Pillar  \n\n### \ud83d\udd10 Security & Compliance (RBAC & Audit)  \n| Metric | Value | Interpretation |\n|--------|-------|----------------|\n| **Role Match** | 0.90 | 90\u202f% of requests map to an allowed role \u2013 acceptable but not perfect. |\n| **Unauthorized Access** | **1.00** | **100\u202f% of evaluated access attempts were flagged as unauthorized** \u2013 indicates a systemic policy\u2011enforcement failure or mis\u2011scored metric. |\n| **Least Privilege** | 0.90 | Roles are largely scoped correctly, but the 10\u202f% gap may expose excess permissions. |\n| **Auditability** | 1.00 | Full audit trail is captured. |\n| **Audit Events** | 32 total, **0 violations** | No violations logged, which conflicts with the \u201cUnauthorized Access = 1.0\u201d signal \u2013 suggests gaps in enforcement or logging fidelity. |\n\n**Takeaway:** The RBAC engine is *detecting* unauthorized attempts but **not preventing** them, creating a high\u2011risk exposure.  \n\n### \ud83d\udcca Quality & Accuracy (Answer Quality & Retrieval)  \n- **Answer Quality** (10 samples)  \n  - Faithfulness: **0.83** \u2013 generally accurate but 17\u202f% hallucination risk.  \n  - Relevance: **0.86** \u2013 good alignment with queries.  \n  - **Completeness:** **0.665** \u2013 **33\u202f% of answers miss required information**.  \n  - Clarity: **0.93** \u2013 well\u2011phrased responses.  \n  - Embedding Similarity: **0.317** \u2013 low semantic match between query and retrieved chunks.  \n\n- **Retrieval Performance**  \n  - Precision: **0.625** \u2013 37.5\u202f% of retrieved docs are irrelevant.  \n  - Recall: **0.75** \u2013 25\u202f% of relevant docs missed.  \n  - Hit Rate: **0.90** \u2013 10\u202f% of queries return no hits.  \n  - MRR: **0.783**, NDCG: **0.801** \u2013 ranking is decent but leaves room for improvement.  \n\n**Takeaway:** Retrieval is the primary driver of the low completeness score; the system often surfaces partially relevant or insufficient context.  \n\n### \u26a1 Performance & Scalability (Latency, Vector DB, Text\u2011to\u2011SQL)  \n| Metric | Value | Concern |\n|--------|-------|---------|\n| **Average Latency** | 1.76\u202fs | Acceptable for batch workloads, but **outliers** are severe. |\n| **P95 Latency** | 8.95\u202fs | 95\u202f% of requests exceed typical SLA (<\u202f2\u202fs). |\n| **P99 Latency** | 9.58\u202fs | Near\u201110\u202fs tail latency \u2013 unacceptable for interactive use. |\n| **Throughput** | 0.57\u202fops/sec | **Very low**; cannot support concurrent users. |\n| **Vector DB Recall@K / MRR / NDCG** | 1.0 (perfect) | Retrieval from the vector store is flawless **when it is invoked**. |\n| **Avg Retrieval Time (Vector DB)** | 0.012\u202fs | Negligible \u2013 bottleneck lies elsewhere (model inference, orchestration). |\n| **Text\u2011to\u2011SQL** | Syntax Validity 0.10, Schema Conformance 0.10, Errors\u202f=\u202f9 | **90\u202f% of generated SQL is invalid or non\u2011conforming** \u2013 a critical functional defect. |\n\n**Takeaway:** The system\u2019s **latency tail** and **throughput** are the dominant performance blockers. Text\u2011to\u2011SQL generation is effectively unusable in its current state.  \n\n---  \n\n## 3. Identified Risks  \n\n| Risk Category | Description | Impact |\n|---------------|-------------|--------|\n| **Unauthorized Access Enforcement Failure** | RBAC flags 100\u202f% of attempts as unauthorized but does **not block** them; audit logs show zero violations, indicating a gap between detection and enforcement. | **Critical \u2013 potential data leakage, regulatory breach.** |\n| **Answer Incompleteness** | Completeness at 66.5\u202f% means a third of responses omit required facts, increasing user mistrust and downstream decision errors. | High \u2013 affects business credibility. |\n| **Retrieval Precision Deficit** | 37.5\u202f% of retrieved documents are irrelevant, inflating hallucination risk and latency (extra processing). | Medium\u2011High \u2013 degrades quality and performance. |\n| **Latency Tail & Low Throughput** | P95/P99 >\u202f8\u202fs and <\u202f1\u202fop/s throughput cannot meet SLA for any real\u2011time enterprise use case. | Critical \u2013 limits scalability and user experience. |\n| **Text\u2011to\u2011SQL Generation Failure** | Only 10\u202f% of generated queries are syntactically valid and schema\u2011compliant; 9 errors observed in a small sample. | High \u2013 renders the feature unusable for data\u2011driven workflows. |\n| **Metric Inconsistency (Audit vs. RBAC)** | Zero logged violations contradicts the \u201cUnauthorized Access = 1.0\u201d metric, suggesting incomplete monitoring or mis\u2011instrumentation. | Medium \u2013 hampers incident response and compliance reporting. |\n\n---  \n\n## 4. Actionable Recommendations  \n\n| Priority | Recommendation | Owner(s) | Success Metric |\n|----------|----------------|----------|----------------|\n| **1\ufe0f\u20e3** | **Enforce RBAC at the gate** \u2013 integrate the RBAC decision engine with the request dispatcher to *reject* unauthorized calls (HTTP\u202f403) and log the denial. | Security Engineering, Platform Ops | Unauthorized Access Denial Rate \u2265\u202f99\u202f% (no successful unauthorized calls). |\n| **2\ufe0f\u20e3** | **Close the audit\u2011logging gap** \u2013 add verification that every RBAC decision (allow/deny) is emitted to the audit pipeline; implement automated reconciliation between RBAC metrics and audit logs. | Compliance, Observability Team | Audit\u2011Log Completeness = 100\u202f% of RBAC decisions. |\n| **3\ufe0f\u20e3** | **Improve Retrieval Precision** \u2013 fine\u2011tune embedding model, add relevance re\u2011ranking (e.g., cross\u2011encoder), and introduce hard negative mining to raise precision to \u2265\u202f0.80. | Retrieval R&D, Data Science | Retrieval Precision \u2265\u202f0.80, Recall \u2265\u202f0.85. |\n| **4\ufe0f\u20e3** | **Boost Latency & Throughput** \u2013 (a) horizontal scale inference workers; (b) enable async batching for model calls; (c) profile and offload any blocking I/O (e.g., network, DB). Target P95 \u2264\u202f2\u202fs, throughput \u2265\u202f10\u202fops/sec. | Platform Engineering, SRE | P95 Latency \u2264\u202f2\u202fs, Throughput \u2265\u202f10\u202fops/sec. |\n| **5\ufe0f\u20e3** | **Rework Text\u2011to\u2011SQL pipeline** \u2013 add a syntax\u2011checker (SQL parser) and schema validator as post\u2011generation guards; consider few\u2011shot prompting with schema examples or a dedicated fine\u2011tuned model. Aim for \u2265\u202f0.90 validity & conformance. | NLP Engineering, Data Engineering | Syntax Validity \u2265\u202f0.90, Schema Conformance \u2265\u202f0.90. |\n| **6\ufe0f\u20e3** *(optional)* | **Monitor Embedding Similarity** \u2013 low similarity (0.317) signals poor vector representation; schedule periodic embedding quality audits and consider hybrid retrieval (BM25 + vector). | Retrieval R&D | Embedding Similarity \u2265\u202f0.5. |\n\n---  \n\n### Quick Win Checklist (to be completed within 4\u202fweeks)  \n- \u2610 Gate RBAC decisions with immediate deny response.  \n- \u2610 Emit a structured audit record for every RBAC decision.  \n- \u2610 Deploy a lightweight SQL syntax validator in the Text\u2011to\u2011SQL flow.  \n- \u2610 Add latency alerts on P95 >\u202f3\u202fs and throughput <\u202f2\u202fops/sec.  \n\n---  \n\n**Bottom Line:** The system passes formal compliance checks but exhibits **critical enforcement failures, sub\u2011par answer completeness, and severe performance bottlenecks**. Prioritizing RBAC enforcement, audit integrity, and latency improvements will move the readiness score into the enterprise\u2011acceptable range and mitigate the highest\u2011impact risks."
+}

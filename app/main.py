@@ -1,6 +1,8 @@
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 import logging
+
+from app.utils.audit_context import initialize_request_audit_context
 
 # Configure logging for production
 logging.basicConfig(
@@ -12,7 +14,7 @@ logging.basicConfig(
 # import DB connections from central module (initialises on import)
 from app.schemas.duckdb import (
     init_duckdb,
-    get_duckdb_conn
+    close_duckdb
 )
 
 from app.schemas.sqlitedb import (
@@ -29,6 +31,16 @@ app = FastAPI()
 
 load_dotenv()
 
+
+@app.middleware("http")
+async def add_request_context(request: Request, call_next):
+    request_id, correlation_id = initialize_request_audit_context(request)
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = request_id
+    response.headers["X-Correlation-ID"] = correlation_id
+    return response
+
+
 @app.on_event("startup")
 def startup():
     init_duckdb()
@@ -44,5 +56,5 @@ app.include_router(chat_router, tags=["Chat"])
 async def shutdown_event():
     """Close database connections on app shutdown"""
     get_sqlite_conn().close()
-    get_duckdb_conn().close()
-    print("✅ SQLite and DuckDB connections closed")
+    close_duckdb()
+    print("✅ SQLite connection closed")

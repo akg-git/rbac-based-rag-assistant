@@ -38,44 +38,8 @@ def init_sqlite(conn: sqlite3.Connection = sqlite_conn) -> None:
     # keep module-level connection open for app reuse
 
 
-# create default C-Level user for testing/demo purposes
-def create_default_user(conn: sqlite3.Connection = sqlite_conn) -> None:
-    cur = conn.cursor()
-
-    cur.execute("INSERT OR IGNORE INTO roles (role_name) VALUES (?)", ("C-Level",))
-    
-    password = "admin123"
-    hashed_pw = hash_password(password)
-    
-    try:
-        verify_password(password, hashed_pw)
-        print("✅ Password hashing and verification successful.")
-    except VerifyMismatchError:
-        print("Hased Password:", hashed_pw)
-        print("❌ Invalid Password")
-    except InvalidHashError as ihe:
-        print("Hased Password:", hashed_pw)
-        print(f"❌ Invalid hash error: {ihe}")
-    except Exception as e:
-        print(f"❌ Error during password hashing: {type(e).__name__}: {e}")
-        return
-
-    try:
-        cur.execute("INSERT INTO users (username, password, role) VALUES (?, ?, ?)", ("admin", hashed_pw, "C-Level"))
-        conn.commit()
-        print("✅ Default C-Level user created.")
-    except sqlite3.IntegrityError:
-        print("⚠️ User already exists.")
-    except Exception as e:
-        print(f"❌ Error creating default user: {type(e).__name__}: {e}")
-        conn.rollback()
-
-
 # initialize sqlite schema at import time
 init_sqlite()
-
-# create default user at import time
-create_default_user()
 
 
 
