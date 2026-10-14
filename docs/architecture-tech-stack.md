@@ -85,7 +85,7 @@ The chat endpoint authenticates first, classifies the question, and routes to SQ
 
 - HTTP Basic credentials are sent on each request; logout is client-side only.
 - The default demo credential must be removed or replaced before deployment.
-- Operational embedding endpoints are currently unauthenticated.
+- Operational embedding endpoints require authenticated C-Level access; retry is exposed as a POST operation and status responses do not include server paths.
 - Upload filename/path handling needs sanitization and stronger validation.
 - The optional reranker path is not currently wired into the production chat call and the helper returns before constructing the contextual compression retriever.
 - Module-level initialization requires external API keys and may make imports fail in environments without configuration.

@@ -19,6 +19,63 @@ router = APIRouter()
 
 UPLOAD_DIR = "static/uploads/"
 
+
+def check_c_level_access(
+    audit: AuditContext,
+    *,
+    action: str = "document.upload",
+    resource: str = "document.upload",
+    detail: str = "Only C-Level can perform this action.",
+    query_mode: str = "administration",
+) -> None:
+    """Authorize a C-Level action and audit denied requests."""
+    if str(audit.role).casefold() != "c-level":
+        audit.emit(
+            action=action,
+            resource=resource,
+            authorization_decision="denied",
+            result="failure",
+            outcome_status="denied",
+            query_mode=query_mode,
+        )
+        raise HTTPException(status_code=403, detail=detail)
+
+
+def _get_embedding_status_payload() -> dict:
+    """Return embedding status without exposing filesystem paths."""
+    sqlite_conn = get_sqlite_conn()
+    sqlite_cur = sqlite_conn.cursor()
+    sqlite_cur.execute("""
+        SELECT filename, embedded, role FROM documents
+        ORDER BY embedded DESC, filename ASC
+    """)
+
+    docs = sqlite_cur.fetchall()
+    embedded = [{"filename": d[0], "role": d[2]} for d in docs if d[1] == 1]
+    unembedded = [{"filename": d[0], "role": d[2]} for d in docs if d[1] == 0]
+
+    return {
+        "total": len(docs),
+        "embedded_count": len(embedded),
+        "unembedded_count": len(unembedded),
+        "embedded_docs": embedded,
+        "unembedded_docs": unembedded,
+    }
+
+
+async def _retry_unembedded_documents() -> dict:
+    """Retry indexing and return the current aggregate embedding counts."""
+    loop = asyncio.get_running_loop()
+    with ThreadPoolExecutor() as executor:
+        await loop.run_in_executor(executor, index_unembedded_document)
+
+    status = _get_embedding_status_payload()
+    return {
+        "embedded_count": status["embedded_count"],
+        "unembedded_count": status["unembedded_count"],
+    }
+
+
 @router.post("/upload-docs")
 async def upload_docs(
     file: UploadFile = File(...),
@@ -40,17 +97,7 @@ async def upload_docs(
             )
             raise HTTPException(status_code=401, detail="Authentication required.")
 
-        # Check if the authenticated user has the "C-Level" role before uploading documents
-        if audit.role != "C-Level":
-            audit.emit(
-                action="document.upload",
-                resource="document.upload",
-                authorization_decision="denied",
-                result="failure",
-                outcome_status="denied",
-                query_mode="document",
-            )
-            raise HTTPException(status_code=403, detail="Only C-Level can upload documents.")
+        check_c_level_access(audit)
 
         sqlite_conn = get_sqlite_conn()
         sqlite_cur = sqlite_conn.cursor()
@@ -201,6 +248,44 @@ async def upload_docs(
                 )
         except Exception as embed_error:
             logger.error(f"[UPLOAD] Embedding failed for {filename}: {type(embed_error).__name__}: {str(embed_error)}", exc_info=True)
+
+            retry_attempted = False
+            retry_error = None
+            try:
+                embedding_status = _get_embedding_status_payload()
+                if embedding_status["unembedded_count"] > 0:
+                    retry_attempted = True
+                    await _retry_unembedded_documents()
+            except Exception as retry_exception:
+                retry_error = retry_exception
+                logger.error(
+                    "[UPLOAD] Automatic embedding retry failed for %s: %s: %s",
+                    filename,
+                    type(retry_exception).__name__,
+                    str(retry_exception),
+                    exc_info=True,
+                )
+
+            sqlite_cur.execute(
+                "SELECT embedded FROM documents WHERE filename = ? ORDER BY id DESC LIMIT 1",
+                (filename,),
+            )
+            embedded_after_retry = sqlite_cur.fetchone()
+            if embedded_after_retry and embedded_after_retry[0] == 1:
+                audit.emit(
+                    action="document.upload",
+                    resource=f"document.upload:{filename}",
+                    authorization_decision="allowed",
+                    result="success",
+                    outcome_status="authorized",
+                    query_mode="document",
+                )
+                return JSONResponse(content={
+                    "message": f"{filename} uploaded and embedded successfully after retry.",
+                    "embedded": True,
+                    "retry_attempted": retry_attempted,
+                })
+
             audit.emit(
                 action="document.upload",
                 resource=f"document.upload:{filename}",
@@ -214,7 +299,9 @@ async def upload_docs(
                 content={
                     "message": f"⚠️ {filename} uploaded but embedding failed: {str(embed_error)[:100]}",
                     "error": str(embed_error),
-                    "embedded": False
+                    "embedded": False,
+                    "retry_attempted": retry_attempted,
+                    "retry_failed": retry_error is not None
                 }
             )
     
@@ -238,70 +325,98 @@ async def upload_docs(
         raise HTTPException(status_code=500, detail=f"An error occurred while uploading the file: {str(e)[:100]}")
 
 
-@router.get("/retry-embed")
-async def retry_embed_documents():
+@router.post("/admin/embedding/retry")
+async def retry_embed_documents(
+    audit: AuditContext = Depends(get_audit_context),
+):
     """
-    Manual endpoint to retry embedding for all unembedded documents.
-    Useful for debugging and recovery.
+    Retry embedding for all unembedded documents.
+
+    This is an administrative operation because it performs external model
+    calls and writes to the vector store.
     """
+    check_c_level_access(
+        audit,
+        action="document.embedding.admin",
+        resource="document.embedding",
+        detail="Administrator access required.",
+        query_mode="document",
+    )
     try:
         logger.info("[RETRY] Starting manual embedding retry...")
-        
-        loop = asyncio.get_event_loop()
-        with ThreadPoolExecutor() as executor:
-            await loop.run_in_executor(executor, index_unembedded_document)
+        retry_counts = await _retry_unembedded_documents()
         
         logger.info("[RETRY] Embedding retry completed")
         
-        # Count embedded documents
-        sqlite_conn = get_sqlite_conn()
-        sqlite_cur = sqlite_conn.cursor()
-        sqlite_cur.execute("SELECT COUNT(*) FROM documents WHERE embedded = 1")
-        embedded_count = sqlite_cur.fetchone()[0]
-        
-        sqlite_cur.execute("SELECT COUNT(*) FROM documents WHERE embedded = 0")
-        unembedded_count = sqlite_cur.fetchone()[0]
-        
+        audit.emit(
+            action="document.embedding.retry",
+            resource="document.embedding",
+            authorization_decision="allowed",
+            result="success",
+            outcome_status="authorized",
+            query_mode="document",
+        )
         return JSONResponse(content={
             "message": "Retry embedding completed",
-            "embedded_count": embedded_count,
-            "unembedded_count": unembedded_count
+            **retry_counts,
         })
         
     except Exception as e:
         logger.error(f"[RETRY] Error during retry: {type(e).__name__}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Retry failed: {str(e)[:100]}")
+        audit.emit(
+            action="document.embedding.retry",
+            resource="document.embedding",
+            authorization_decision="allowed",
+            result="failure",
+            outcome_status="failed",
+            query_mode="document",
+        )
+        raise HTTPException(status_code=500, detail="Retry failed.")
 
 
-@router.get("/embedding-status")
-async def get_embedding_status():
+@router.get("/admin/embedding-status")
+async def get_embedding_status(
+    audit: AuditContext = Depends(get_audit_context),
+):
     """
-    Check embedding status for all documents.
+    Check embedding status for all documents without exposing server paths.
     """
+    check_c_level_access(
+        audit,
+        action="document.embedding.admin",
+        resource="document.embedding",
+        detail="Administrator access required.",
+        query_mode="document",
+    )
     try:
-        sqlite_conn = get_sqlite_conn()
-        sqlite_cur = sqlite_conn.cursor()
-        
-        sqlite_cur.execute("""
-            SELECT filename, embedded, filepath FROM documents 
-            ORDER BY embedded DESC, filename ASC
-        """)
-        
-        docs = sqlite_cur.fetchall()
-        
-        embedded = [{"filename": d[0], "filepath": d[2]} for d in docs if d[1] == 1]
-        unembedded = [{"filename": d[0], "filepath": d[2]} for d in docs if d[1] == 0]
-        
+        status = _get_embedding_status_payload()
+
+        audit.emit(
+            action="document.embedding.status",
+            resource="document.embedding",
+            authorization_decision="allowed",
+            result="success",
+            outcome_status="authorized",
+            query_mode="document",
+        )
         return JSONResponse(content={
-            "total": len(docs),
-            "embedded": len(embedded),
-            "unembedded": len(unembedded),
-            "embedded_docs": embedded,
-            "unembedded_docs": unembedded
+            "total": status["total"],
+            "embedded": status["embedded_count"],
+            "unembedded": status["unembedded_count"],
+            "embedded_docs": status["embedded_docs"],
+            "unembedded_docs": status["unembedded_docs"],
         })
         
     except Exception as e:
         logger.error(f"[STATUS] Error getting status: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Status check failed: {str(e)}")
+        audit.emit(
+            action="document.embedding.status",
+            resource="document.embedding",
+            authorization_decision="allowed",
+            result="failure",
+            outcome_status="failed",
+            query_mode="document",
+        )
+        raise HTTPException(status_code=500, detail="Status check failed.")
 
 

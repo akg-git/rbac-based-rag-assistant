@@ -61,8 +61,8 @@ Response includes `user`, `role`, `mode`, `answer`, and `fallback`. Successful S
 - CSV files are loaded into DuckDB and also indexed as row-oriented text documents.
 - Markdown/text files are indexed as document content.
 - Successful indexing returns `embedded: true`; upload success with incomplete indexing returns `202` and `embedded: false`.
-- `GET /retry-embed` retries all unembedded records.
-- `GET /embedding-status` reports total, embedded, and unembedded documents.
+- `POST /admin/embedding/retry`: C-Level-only operation that retries all unembedded records.
+- `GET /admin/embedding-status`: C-Level-only operation that reports total, embedded, and unembedded documents without exposing server paths.
 
 ## Processing rules
 
