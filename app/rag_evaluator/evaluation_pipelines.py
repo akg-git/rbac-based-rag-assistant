@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from app.utils.rag_module import vectorstore
+from app.utils.rag_module import get_vectorstore
 from app.utils.rag_chain import rag_handler
 
 from app.rag_evaluator.evaluation_dataset_builder import EvaluationDatasetBuilder
@@ -144,7 +144,7 @@ class EvaluationPipeline:
         self.groq_client = client
         self.evaluation_dataset_builder = EvaluationDatasetBuilder(
             groq_client=self.groq_client,
-            vectorstore=vectorstore,
+            vectorstore=get_vectorstore(),
             model_name=MODEL_NAME,
             data_dir=DATA_DIR,
             raw_results_dir=self.raw_results_dir,

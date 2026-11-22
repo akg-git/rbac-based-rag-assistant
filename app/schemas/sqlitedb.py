@@ -42,10 +42,8 @@ def init_sqlite(conn: sqlite3.Connection = sqlite_conn) -> None:
 init_sqlite()
 
 
-
 def get_sqlite_conn() -> sqlite3.Connection:
     return sqlite_conn
-
 
 def get_sqlite_cursor() -> sqlite3.Cursor:
     return sqlite_conn.cursor()

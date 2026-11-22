@@ -6,6 +6,7 @@ from app.utils.query_classifier import detect_query_mode
 from app.utils.sql_query import handle_sql_query
 from app.utils.rag_chain import rag_handler
 from app.utils.audit_context import AuditContext, get_audit_context
+from app.utils.context_memory import contextualize_question_with_history
 import logging
 
 logger = logging.getLogger(__name__)
@@ -18,25 +19,33 @@ async def chat_endpoint(
     audit: AuditContext = Depends(get_audit_context),
 ):
     """
-    Routes to SQL or RAG based on query classification with fallback strategy.
+    Routes to SQL or RAG based on query classification with fallback strategy
+    and conversational context memory.
     """
     
     try:
         role = audit.role
         username = audit.username
-        question = request.question.strip() if request.question else ""
+        raw_question = request.question.strip() if request.question else ""
         
         # Validate input
-        if not question:
+        if not raw_question:
             raise HTTPException(status_code=400, detail="Question cannot be empty")
         
-        logger.info(f"[CHAT] User={username}, Role={role}, Question={question[:50]}...")
+        logger.info(f"[CHAT] User={username}, Role={role}, Raw Question={raw_question[:50]}...")
 
         request_id = audit.request_id
         correlation_id = audit.correlation_id
 
-        # Detect query mode
-        mode = detect_query_mode(question)
+        # Contextualize question with chat history (memory pattern)
+        effective_question = raw_question
+        if request.history:
+            effective_question = contextualize_question_with_history(raw_question, request.history)
+            if effective_question != raw_question:
+                logger.info(f"[CHAT] Query reformulated with context: '{raw_question}' -> '{effective_question}'")
+
+        # Detect query mode on effective question
+        mode = detect_query_mode(effective_question)
         logger.info(f"[CHAT] Detected mode: {mode}")
 
         result = {}
@@ -47,7 +56,7 @@ async def chat_endpoint(
         if mode == "SQL":
             try:
                 result = handle_sql_query(
-                    question,
+                    effective_question,
                     role,
                     username,
                     return_sql=True,
@@ -79,7 +88,7 @@ async def chat_endpoint(
                 logger.warning(f"[CHAT] SQL fallback triggered: {str(e)}")
                 # Fallback to RAG
                 result = await rag_handler(
-                    question,
+                    effective_question,
                     role,
                     username=username,
                     request_id=request_id,
@@ -90,7 +99,7 @@ async def chat_endpoint(
         else:
             # Direct RAG mode
             result = await rag_handler(
-                question,
+                effective_question,
                 role,
                 username=username,
                 request_id=request_id,
@@ -115,6 +124,10 @@ async def chat_endpoint(
             "answer": result["answer"],
             "fallback": fallback_used
         }
+
+        # Add contextualized question if reformulated
+        if effective_question != raw_question:
+            response["contextualized_question"] = effective_question
         
         # Add SQL if available
         if sql_query:
