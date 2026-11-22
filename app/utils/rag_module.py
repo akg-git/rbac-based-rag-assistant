@@ -1,10 +1,11 @@
-from fastapi import HTTPException
+from functools import lru_cache
+import logging
+import os
 from pathlib import Path
+from fastapi import HTTPException
 from groq import Groq
 import pandas as pd
-
 from dotenv import load_dotenv
-import os
 
 from app.schemas.sqlitedb import get_sqlite_conn
 from langchain_core.documents import Document
@@ -18,47 +19,36 @@ from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_classic.retrievers.contextual_compression import ContextualCompressionRetriever
 
-
 load_dotenv()
 
 os.environ["LANGCHAIN_TRACING_V2"] = "true"
 os.environ["LANGCHAIN_ENDPOINT"] = "https://api.smith.langchain.com"
 os.environ["LANGCHAIN_PROJECT"] = "RAG"
 
-langchain_key = os.getenv("LANGCHAIN_API_KEY")
-groq_api_key = os.getenv("GROQ_API_KEY")
-cohere_api_key = os.getenv("COHERE_API_KEY")
-hf_api_key = os.getenv("HF_API_KEY")
+logger = logging.getLogger(__name__)
 
-if not groq_api_key:
-    # raise SystemExit(f"Missing GROQ_API_KEY in {ENV_FILE}")
-    raise SystemExit(f"Missing GROQ_API_KEY in ENV FILE")
-elif not langchain_key:
-    raise SystemExit(f"Missing LANGCHAIN_API_KEY in ENV FILE")
-elif not cohere_api_key:
-    raise SystemExit(f"Missing COHERE_API_KEY in ENV FILE")
+# ===========================================================================
+# LAZY INITIALIZATION PROVIDERS (SINGLETONS)
+# ===========================================================================
 
-groq_client = Groq(api_key=groq_api_key)
+@lru_cache(maxsize=1)
+def get_embeddings() -> HuggingFaceEmbeddings:
+    """Instantiate HuggingFace embeddings lazily on first access."""
+    return HuggingFaceEmbeddings(
+        model_name="sentence-transformers/all-MiniLM-L6-v2"
+    )
 
-# initialize vectorstore at module level
-# ==============================
-# ====Split,load,embed==========
-# ==============================
+@lru_cache(maxsize=1)
+def get_vectorstore() -> Chroma:
+    """Connect to ChromaDB lazily on first access."""
+    return Chroma(
+        persist_directory="chroma_db",
+        embedding_function=get_embeddings()
+    )
 
-# Create the embedding function using LangChain
-embeddings = HuggingFaceEmbeddings(
-    model_name="sentence-transformers/all-MiniLM-L6-v2"
-)
-
-# Create a ChromaDB collection with LangChain compatibility
-vectorstore = Chroma(
-    persist_directory="chroma_db",
-    embedding_function=embeddings
-)
 
 def load_file(filepath, role):
     """Load file with comprehensive error handling and path validation."""
-    import logging
     logger = logging.getLogger(__name__)
     
     # Ensure filepath is absolute to avoid working directory issues
@@ -110,12 +100,6 @@ def load_file(filepath, role):
                 )
             ]
         
-            # logger.info(f"[LOAD_FILE] Successfully loaded {len(content)} characters from file")
-            # return [{
-            #         "page_content":content,
-            #         "metadata": {"role": role.lower(), "source": Path(filepath).name}
-            # }]
-        
         else:
             logger.error(f"[LOAD_FILE] Unsupported file type: {extension}")
             raise HTTPException(status_code=400, detail=f"Unsupported file type: {extension}")
@@ -124,26 +108,23 @@ def load_file(filepath, role):
         logger.error(f"[LOAD_FILE] Error loading file {filepath}: {type(e).__name__}: {str(e)}", exc_info=True)
         return None
 
+
 def embed_documents_to_vectorstore(docs):
     """Add documents to vectorstore with LangChain-compatible embedding function."""
-    import logging
     logger = logging.getLogger(__name__)
     
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
     splits = text_splitter.split_documents(docs)
-    vectorstore.add_documents(splits)
+    get_vectorstore().add_documents(splits)
     logger.info(f"[VECTORSTORE] ✅ Successfully added to vectorstore")
 
-    # print("Documents embedded and saved to vectorstore.")
-    # print("Total documents:", len(vectorstore.get()["documents"]))
-
-    total_docs = len(vectorstore.get().get("documents", []))
+    total_docs = len(get_vectorstore().get().get("documents", []))
     logger.info(f"[VECTORSTORE] Total documents in vectorstore: {total_docs}")
+
 
 # This function is defined to index any existing documents in the vectorstore that haven't been embedded yet.
 def index_unembedded_document():
     """Embed all unembedded documents in the vector store with comprehensive logging and error handling."""
-    import logging
     logger = logging.getLogger(__name__)
     
     try:
@@ -242,18 +223,28 @@ chat_prompt = ChatPromptTemplate.from_messages([
     ("human", "{input}"),
 ])
 
-# Model
-model = ChatGroq(
-    groq_api_key=groq_api_key,
-    model_name=os.getenv("GROQ_MODEL"),
-    temperature=0.2
-)
 
-chatting_chain = create_stuff_documents_chain(llm=model, prompt=chat_prompt)
+@lru_cache(maxsize=1)
+def get_chat_model() -> ChatGroq:
+    """Instantiate ChatGroq model lazily on demand."""
+    groq_api_key = os.getenv("GROQ_API_KEY")
+    if not groq_api_key:
+        raise ValueError("Missing GROQ_API_KEY in environment variables")
+    return ChatGroq(
+        groq_api_key=groq_api_key,
+        model_name=os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
+        temperature=0.2
+    )
+
+
+@lru_cache(maxsize=1)
+def get_chatting_chain():
+    """Build combine documents chain lazily on demand."""
+    return create_stuff_documents_chain(llm=get_chat_model(), prompt=chat_prompt)
+
 
 # Re-ranker function to re-rank retrieved documents based on relevance to the query
 def wrap_with_reranker(retriever, cohere_api_key, top_n=4):
-
     # Create Cohere's reranker with the vector DB using the base retriever
     reranker = CohereRerank(
         cohere_api_key=cohere_api_key, 
@@ -270,24 +261,24 @@ def wrap_with_reranker(retriever, cohere_api_key, top_n=4):
     return compression_retriever
 
 
-def get_rag_chain(user_role: str, cohere_api_key: str = None):
+def get_rag_chain(user_role: str, cohere_api_key: str | None = None):
     user_role = user_role.lower()
 
     # c-level users can access all documents and have more detailed responses
     if user_role == "c-level":
         # retieve k most relevant documents
-        retriever = vectorstore.as_retriever(search_kwargs = {"k": 4})
+        retriever = get_vectorstore().as_retriever(search_kwargs = {"k": 10})
     
     # genral role users can only access documents tagged with genral
     elif user_role == "general":
-        retriever = vectorstore.as_retriever(search_kwargs = {
-            "k": 4,
+        retriever = get_vectorstore().as_retriever(search_kwargs = {
+            "k": 10,
             "filter": {"role": "general"}
         })
     # remaining users can see corresposnding tagged docuemnts alongside general dcouments
     else:
-        retriever = vectorstore.as_retriever(search_kwargs = {
-            "k": 4,
+        retriever = get_vectorstore().as_retriever(search_kwargs = {
+            "k": 10,
             "filter": {
                 "role": {"$in": [user_role, "general"]}
             }
@@ -297,21 +288,43 @@ def get_rag_chain(user_role: str, cohere_api_key: str = None):
     if cohere_api_key:
         retriever = wrap_with_reranker(retriever, cohere_api_key, 4)
         
-    return create_retrieval_chain(retriever, chatting_chain)
+    return create_retrieval_chain(retriever, get_chatting_chain())
 
 
+# ---------------------------------------------------------------------------
+# PEP 562 BACKWARD COMPATIBILITY
+# ---------------------------------------------------------------------------
+def __getattr__(name: str):
+    """
+    Dynamically resolve module-level attributes for backward compatibility
+    with callers importing `vectorstore`, `embeddings`, `chatting_chain`, etc.
+    """
+    if name == "vectorstore":
+        return get_vectorstore()
+    if name == "embeddings":
+        return get_embeddings()
+    if name == "chatting_chain":
+        return get_chatting_chain()
+    if name == "model":
+        return get_chat_model()
+    if name == "groq_client":
+        groq_api_key = os.getenv("GROQ_API_KEY")
+        return Groq(api_key=groq_api_key) if groq_api_key else None
+    raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
 
-# # ========== MAIN EXECUTION ==========
-# if __name__ == "__main__":
-#     index_unembedded_document() 
 
-#     user_role = "hr" 
-#     rag_chain = get_rag_chain(user_role)
-
-    
-#     query = "give me Campaign Highlights from marketing summary."
-#     response = rag_chain.invoke({"input": query})
-
-#     print((response["answer"]))
-#     for doc in response.get("context", []):
-#         print(f"Source: {doc.metadata['source']}, Role: {doc.metadata.get('role')}")
+__all__ = [
+    "get_embeddings",
+    "get_vectorstore",
+    "get_chat_model",
+    "get_chatting_chain",
+    "get_rag_chain",
+    "wrap_with_reranker",
+    "load_file",
+    "embed_documents_to_vectorstore",
+    "index_unembedded_document",
+    "vectorstore",
+    "embeddings",
+    "chatting_chain",
+    "model",
+]

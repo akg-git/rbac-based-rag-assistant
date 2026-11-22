@@ -1,4 +1,4 @@
-from app.utils.rag_module import get_rag_chain, vectorstore
+from app.utils.rag_module import get_rag_chain, get_vectorstore
 from app.utils.audit_events import emit_audit_event
 from app.utils.response_cache import rag_response_cache
 from concurrent.futures import ThreadPoolExecutor
@@ -64,7 +64,7 @@ def _invoke_chain_with_backoff(chain, input_data: dict) -> dict:
 async def rag_handler(
     question: str,
     role: str,
-    cohere_api_key: str = None,
+    cohere_api_key: str | None = None,
     username: str = "unknown",
     request_id: str | None = None,
     correlation_id: str | None = None,
@@ -140,7 +140,7 @@ async def rag_handler(
             return cached_resp
 
         # Check if vectorstore has documents
-        doc_count = len(vectorstore.get().get("documents", []))
+        doc_count = len(get_vectorstore().get().get("documents", []))
         if doc_count == 0:
             _emit_rag_audit_event(
                 username=username,
@@ -164,7 +164,7 @@ async def rag_handler(
         chain = get_rag_chain(user_role=role, cohere_api_key=cohere_api_key)
 
         # Run sync chain in thread pool with backoff to avoid blocking event loop
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         with ThreadPoolExecutor() as executor:
             result = await loop.run_in_executor(
                 executor,
@@ -182,14 +182,15 @@ async def rag_handler(
             return {"answer": "No relevant information found for your query.", "error": True}
 
         # Build response with context metadata
-        response = {
+        response: dict = {
             "answer": answer,
             "error": False
         }
 
         # Include source documents if available
+        sources: list[str] = []
         if "context" in result and result["context"]:
-            sources = []
+            # collect unique sources
             for doc in result.get("context", []):
                 source = doc.metadata.get("source", "Unknown")
                 if source not in sources:
@@ -207,7 +208,7 @@ async def rag_handler(
             authorization_decision="allowed",
             result="success",
             outcome_status="authorized",
-            source_count=len(response.get("sources", [])),
+            source_count=len(sources),
         )
         # Store in cache
         rag_response_cache.set(response, question, role)

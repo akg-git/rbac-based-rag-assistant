@@ -12,6 +12,7 @@ from app.schemas.duckdb import get_duckdb_conn
 from app.schemas.sqlitedb import get_sqlite_conn
 from app.utils.rag_module import index_unembedded_document
 from app.utils.audit_context import AuditContext, get_audit_context
+from app.utils.response_cache import rag_response_cache, sql_response_cache
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +70,8 @@ async def _retry_unembedded_documents() -> dict:
     with ThreadPoolExecutor() as executor:
         await loop.run_in_executor(executor, index_unembedded_document)
 
+    rag_response_cache.clear()
+    sql_response_cache.clear()
     status = _get_embedding_status_payload()
     return {
         "embedded_count": status["embedded_count"],
@@ -115,8 +118,17 @@ async def upload_docs(
 
         # extract the file details
         filename = file.filename
-        extension = filename.split(".")[-1].lower()
-        # extension = Path(filename).suffix.lower()
+        if not filename or not filename.strip():
+            audit.emit(
+                action="document.upload",
+                resource="document.upload",
+                authorization_decision="denied",
+                result="failure",
+                outcome_status="failed",
+                query_mode="document",
+            )
+            raise HTTPException(status_code=400, detail="Filename is required.")
+        extension = filename.strip().split(".")[-1].lower()
 
         # save the file to the appropriate directory based on the role
         role_dir = os.path.join(UPLOAD_DIR, role)
@@ -205,7 +217,7 @@ async def upload_docs(
             logger.info(f"[UPLOAD] Starting embedding process for: {filename}")
             
             # Run embedding in thread executor
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             with ThreadPoolExecutor() as executor:
                 await loop.run_in_executor(executor, index_unembedded_document)
             
@@ -217,6 +229,8 @@ async def upload_docs(
             
             if embedded_status and embedded_status[0] == 1:
                 logger.info(f"[UPLOAD] ✅ Document {filename} confirmed embedded in vectorstore")
+                rag_response_cache.clear()
+                sql_response_cache.clear()
                 audit.emit(
                     action="document.upload",
                     resource=f"document.upload:{filename}",

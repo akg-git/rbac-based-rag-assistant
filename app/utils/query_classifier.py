@@ -34,4 +34,7 @@ def detect_query_mode(question: str) -> str:
         temperature=0
     )
 
-    return response.choices[0].message.content.strip().upper()
+    raw_response = response.choices[0].message.content if response.choices else None
+    query_mode = raw_response.strip().upper() if raw_response else ""
+
+    return query_mode

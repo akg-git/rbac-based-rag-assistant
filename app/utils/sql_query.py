@@ -72,7 +72,10 @@ def _call_groq_with_backoff(model_name: str, prompt: str) -> str:
             messages=[{"role": "user", "content": prompt}],
             temperature=0,
         )
-        return response.choices[0].message.content.strip()
+
+        raw_response = response.choices[0].message.content if response.choices else None
+        response = raw_response.strip() if raw_response else ""
+        return response
 
     return _invoke()
 
@@ -352,28 +355,12 @@ def handle_sql_query(
                 "error_type": "authorization",
             }
 
-        MAX_RETRIES = 3
-        sql = ""
-        valid = False
-        referenced_tables = []
-        validation_error = ""
-        error_feedback = ""
-        
-        for attempt in range(MAX_RETRIES):
-            sql = translate_nl_to_sql(question, allowed_tables, conn, error_feedback)
-            if sql.strip() == "INVALID_QUERY":
-                break
-                
-            valid, referenced_tables, validation_error = validate_sql_query(
-                sql,
-                allowed_tables,
-                conn,
-            )
-            
-            if valid:
-                break
-                
-            error_feedback = f"Previous SQL attempt:\n{sql}\nFailed with error: {validation_error}\nPlease correct the SQL query to resolve this error."
+        sql, valid, referenced_tables, validation_error = generate_sql_with_retry(
+            question=question,
+            allowed_tables=allowed_tables,
+            conn=conn,
+            max_retries=3,
+        )
             
         if not sql or sql.strip() == "INVALID_QUERY":
             _emit_sql_audit_event(
